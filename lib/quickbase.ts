@@ -39,6 +39,24 @@ export async function queryRecords(params: {
   return res.json();
 }
 
+/** Update a single field on one record (by Record ID#). */
+export async function updateField(
+  tableId: string,
+  recordId: number,
+  fid: number,
+  value: unknown
+): Promise<void> {
+  const res = await fetch(`${API}/records`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ to: tableId, data: [{ "3": { value: recordId }, [fid]: { value } }] }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Quickbase update failed (${res.status}): ${await res.text()}`);
+  }
+}
+
 /** List a table's fields (used by the introspection script). */
 export async function getFields(
   tableId: string

@@ -65,8 +65,34 @@ assignments and prints their link). Re-run with flags reset when done.
    - `QB_USER_TOKEN`  ← secret
    - `QB_TABLE_VENDORS` = `buskqh272`
    - `QB_TABLE_JOBS` = `buskqh3eh`
+   - `GMAIL_USER` = `admin@byrdsonservices.com`  *(automated email — see §6)*
+   - `GMAIL_APP_PASSWORD` = *(16-char Google App Password — see §6)*  ← secret
+   - `PORTAL_SEND_KEY` = *(random string; must match `SEND_KEY` in the Code Page)*  ← secret
+   - `PORTAL_BASE` = your deployed URL (used to build links inside emails)
 3. Deploy. Your portal base URL becomes e.g. `https://byrdson-vendors.vercel.app`.
 4. Put that URL into the Code Page's `PORTAL_BASE`.
+
+## 6. Automated invite email (Gmail)
+
+The **Send invite** button POSTs to `/api/send-invite`, which emails the vendor from
+`admin@byrdsonservices.com` via Gmail SMTP and marks `Invite Sent?` — no compose window.
+
+**Google no longer allows SMTP with the normal account password.** You must use an
+**App Password**:
+
+1. On `admin@byrdsonservices.com`, enable **2-Step Verification**
+   (Google Account ▸ Security).
+2. Generate an **App Password** at <https://myaccount.google.com/apppasswords>
+   (name it e.g. "Vendor Portal"). You get a 16-character code.
+3. Put that code in Vercel as `GMAIL_APP_PASSWORD` (and in local `.env.local`).
+4. Pick any random string for `PORTAL_SEND_KEY` (Vercel) and paste the **same** value into
+   `SEND_KEY` in the Code Page CONFIG **inside Quickbase only** — the GitHub repo is public,
+   so `SEND_KEY` stays blank in source.
+
+If auto-send ever fails, staff can still **Copy → Email in Gmail** (opens Gmail compose).
+
+> Workspace admins can alternatively use a Gmail **OAuth2 / service account** instead of an
+> App Password; swap the nodemailer `auth` block in `app/api/send-invite/route.ts`.
 
 ## 5. Add the Code Page in Quickbase
 

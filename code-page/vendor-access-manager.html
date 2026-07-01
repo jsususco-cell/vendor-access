@@ -157,6 +157,9 @@
 const REALM        = "byrdsonservices.quickbase.com";
 const VENDOR_TABLE = "buskqh272";
 const PORTAL_BASE  = "https://vendor-access-lyart.vercel.app";
+// Shared secret for automated email send. MUST equal Vercel env PORTAL_SEND_KEY.
+// Set this ONLY here inside Quickbase — the GitHub repo is public, so it stays blank there.
+const SEND_KEY     = "";
 const FID = {
   name:           100,  // Name of Primary Contact Person
   company:        23,   // Company
@@ -307,21 +310,34 @@ window.onCopy = async (rid) => {
   } catch (e) { showErr(String(e.message || e)); }
 };
 
+// Automated background send — POSTs to the Vercel /api/send-invite endpoint,
+// which emails the vendor from admin@byrdsonservices.com via Gmail. No compose window.
 window.onSend = async (rid) => {
   showErr("");
-  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set — add your Vercel URL in the Code Page CONFIG, then reload. Until then links have no domain.");
+  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set in the Code Page CONFIG.");
+  if (!SEND_KEY) return showErr("SEND_KEY is not set in the Code Page CONFIG (must match Vercel PORTAL_SEND_KEY).");
   const v = window.__vendors[rid];
   if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
+  const btn = $(`send_${rid}`);
+  const original = btn ? btn.textContent : "";
   try {
-    v.key = await ensureKey(rid, v.key);
-    const link = linkFor(v.key);
-    showLinkOut(v, link);
-    openMail(gmailUrl(v.email, v.name, link)); // opens Gmail compose in a new tab
-    if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
-    const btn = $(`send_${rid}`);
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const res = await fetch(PORTAL_BASE.replace(/\/$/, "") + "/api/send-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-portal-key": SEND_KEY },
+      body: JSON.stringify({ recordId: rid }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    v.sent = true;
     if (btn) btn.textContent = "Resend invite";
-    toast("Gmail compose opened — click 'Email in Gmail' below if the tab was blocked");
-  } catch (e) { showErr(String(e.message || e)); }
+    toast("Invite emailed to " + (data.sentTo || v.email));
+  } catch (e) {
+    if (btn) btn.textContent = original || (v.sent ? "Resend invite" : "Send invite");
+    showErr("Auto-send failed: " + (e.message || e) + " — use Copy → Email in Gmail as a fallback.");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 };
 
 async function load(searchTerm) {

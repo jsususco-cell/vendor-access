@@ -20,6 +20,7 @@ export const VENDOR_FIELDS = {
   company: 23, // Company
   email: 28, // Email
   token: 66, // AccessKey (reused as the unique portal token)
+  inviteSent: 96, // Invite Sent? (checkbox)
   active: 168, // Portal: Active
   canViewJobs: 169, // Portal: Can View Jobs
   canViewSchedule: 170, // Portal: Can View Schedule
