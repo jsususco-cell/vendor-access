@@ -38,6 +38,10 @@
   button.link { background:var(--green); }
   button.sm { padding:7px 11px; font-size:12px; }
   .actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+  .linkout { background:#eef7f1; border:1px solid #bfe8d1; border-radius:12px; padding:12px 14px; margin-bottom:14px; }
+  .lo-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #lo_link { flex:1; min-width:200px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-family:monospace; font-size:12px; background:#fff; }
+  .mailbtn { background:var(--navy); color:#fff; border-radius:9px; padding:8px 13px; font-size:12px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; }
   .card { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(16,24,40,.07); }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
@@ -99,6 +103,16 @@
         <button class="link" id="nf_copy">Copy</button>
       </div>
     </div>
+  </div>
+
+  <div id="linkOut" class="linkout" style="display:none;">
+    <div id="lo_who" class="muted" style="margin-bottom:6px; font-weight:600;"></div>
+    <div class="lo-row">
+      <input id="lo_link" readonly />
+      <button class="ghost sm" id="lo_copy">Copy</button>
+      <a id="lo_mail" class="mailbtn" target="_blank" rel="noopener">Email vendor</a>
+    </div>
+    <div class="muted" style="font-size:11px; margin-top:7px;">If Copy is blocked by the dashboard, the link above is already selected — press Ctrl+C. Use “Email vendor” to open a pre-filled message.</div>
   </div>
 
   <div class="card">
@@ -182,10 +196,47 @@ async function save(rid, fid, value) {
 }
 
 // Reuse the vendor's AccessKey; generate + save one only if it's empty.
+// AccessKey may be managed by an existing automation, so read back the stored value.
 async function ensureKey(rid, currentKey) {
-  let key = currentKey;
-  if (!key) { key = newAccessKey(); await save(rid, FID.token, key); }
+  if (currentKey) return currentKey;
+  const key = newAccessKey();
+  await save(rid, FID.token, key);
+  try {
+    const q = await qb("/records/query", "POST", {
+      from: VENDOR_TABLE, select: [FID.token], where: `{3.EX.'${rid}'}`,
+    });
+    const stored = q.data && q.data[0] && q.data[0][FID.token] && q.data[0][FID.token].value;
+    if (stored) return stored;
+  } catch (e) {}
   return key;
+}
+
+// Robust copy: try the async Clipboard API, then fall back to execCommand (which
+// works inside the Quickbase dashboard iframe where the Clipboard API is blocked).
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", "");
+    ta.style.position = "fixed"; ta.style.top = "0"; ta.style.left = "0"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy"); ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
+// Reveal the link + a real (user-clickable) mailto anchor so staff always have a
+// working path even if the iframe blocks programmatic copy/mail.
+function showLinkOut(v, link) {
+  $("lo_who").textContent =
+    (v.name || v.company || "Vendor") + (v.email ? "  ·  " + v.email : "  ·  no email on file");
+  $("lo_link").value = link;
+  const mail = $("lo_mail");
+  if (v.email) { mail.href = inviteEmail(v.email, v.name, link); mail.style.display = ""; }
+  else { mail.style.display = "none"; }
+  $("linkOut").style.display = "block";
+  $("lo_link").focus(); $("lo_link").select();
 }
 
 function inviteEmail(email, name, link) {
@@ -223,27 +274,31 @@ window.__vendors = {};
 
 window.onCopy = async (rid) => {
   showErr("");
-  if (!PORTAL_BASE) return showErr("Set PORTAL_BASE (your Vercel URL) in the Code Page CONFIG first.");
+  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set — add your Vercel URL in the Code Page CONFIG, then reload. Until then links have no domain.");
   try {
     const v = window.__vendors[rid];
     v.key = await ensureKey(rid, v.key);
-    await navigator.clipboard.writeText(linkFor(v.key)).catch(() => {});
-    toast("Invite link copied");
+    const link = linkFor(v.key);
+    showLinkOut(v, link);
+    const ok = await copyText(link);
+    toast(ok ? "Invite link copied" : "Link ready — it's selected below, press Ctrl+C");
   } catch (e) { showErr(String(e.message || e)); }
 };
 
 window.onSend = async (rid) => {
   showErr("");
-  if (!PORTAL_BASE) return showErr("Set PORTAL_BASE (your Vercel URL) in the Code Page CONFIG first.");
+  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set — add your Vercel URL in the Code Page CONFIG, then reload. Until then links have no domain.");
   const v = window.__vendors[rid];
   if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
   try {
     v.key = await ensureKey(rid, v.key);
-    openMail(inviteEmail(v.email, v.name, linkFor(v.key)));
+    const link = linkFor(v.key);
+    showLinkOut(v, link);
+    openMail(inviteEmail(v.email, v.name, link)); // best-effort auto-open
     if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
     const btn = $(`send_${rid}`);
     if (btn) btn.textContent = "Resend invite";
-    toast("Invite email opened");
+    toast("Invite ready — click 'Email vendor' below if your mail app didn't open");
   } catch (e) { showErr(String(e.message || e)); }
 };
 
@@ -480,10 +535,16 @@ $("createBtn").onclick = async () => {
   }
 };
 
-$("nf_copy").onclick = () => {
-  const el = $("nf_link"); el.select();
-  navigator.clipboard.writeText(el.value).catch(() => {});
-  toast("Invite link copied");
+$("nf_copy").onclick = async () => {
+  const el = $("nf_link"); el.focus(); el.select();
+  const ok = await copyText(el.value);
+  toast(ok ? "Invite link copied" : "Link selected — press Ctrl+C");
+};
+
+$("lo_copy").onclick = async () => {
+  const el = $("lo_link"); el.focus(); el.select();
+  const ok = await copyText(el.value);
+  toast(ok ? "Invite link copied" : "Link selected — press Ctrl+C");
 };
 
 renderForm();
