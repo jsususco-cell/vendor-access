@@ -24,13 +24,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Vendor Portal Manager</title>
 <style>
-  :root { --navy:#1b2a4a; --bg:#eef2f5; --line:#e3e8ee; --muted:#6b7280; --accent:#f0a63a; --green:#2e9e6b; }
+  :root { --navy:#00183D; --navy2:#0F2E63; --red:#ED2C20; --bg:#eef2f5; --line:#e3e8ee; --muted:#6b7280; --accent:#f0a63a; --green:#2e9e6b; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:#1f2a37; font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
   .wrap { max-width:960px; margin:0 auto; padding:22px 16px 60px; }
-  .head { background:var(--navy); color:#fff; border-radius:14px; padding:18px 20px; }
-  .head h1 { margin:0; font-size:20px; }
-  .head p { margin:4px 0 0; opacity:.8; font-size:13px; }
+  .head { background:linear-gradient(100deg,var(--navy) 0%,#062253 60%,#0a2e6b 100%); color:#fff; border-radius:14px; padding:18px 22px; box-shadow:0 2px 10px rgba(0,0,0,.18); display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  .head .logo { display:flex; align-items:center; gap:13px; }
+  .head .shield { width:42px; height:48px; flex:0 0 auto; }
+  .head .brandname { font-weight:800; font-size:20px; letter-spacing:.5px; line-height:1.05; }
+  .head .brandname span { color:var(--red); }
+  .head .brandsub { font-size:10px; color:#b9c6df; letter-spacing:2px; text-transform:uppercase; margin-top:2px; }
+  .head .htitle { border-left:1px solid rgba(255,255,255,.25); padding-left:20px; }
+  .head .htitle h1 { margin:0; font-size:17px; font-weight:600; }
+  .head .htitle p { margin:3px 0 0; opacity:.8; font-size:12px; }
+  @media (max-width:600px){ .head .htitle { border-left:0; padding-left:0; border-top:1px solid rgba(255,255,255,.2); padding-top:12px; flex-basis:100%; } }
   .bar { display:flex; gap:10px; margin:16px 0; }
   .bar input { flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:10px; font-size:14px; }
   button { background:var(--navy); color:#fff; border:0; border-radius:9px; padding:9px 14px; font-size:13px; font-weight:600; cursor:pointer; }
@@ -74,8 +81,21 @@
 <body>
 <div class="wrap">
   <div class="head">
-    <h1>Vendor Portal Manager</h1>
-    <p>Turn on the external portal for a vendor, choose what they see, and copy their private link.</p>
+    <div class="logo">
+      <svg class="shield" viewBox="0 0 100 116" xmlns="http://www.w3.org/2000/svg" aria-label="Byrdson shield">
+        <path d="M50 4 L92 20 L92 60 C92 86 73 104 50 112 C27 104 8 86 8 60 L8 20 Z" fill="#ED2C20" stroke="#ffffff" stroke-width="3"/>
+        <path d="M50 26 L74 44 L74 50 L68 50 L68 84 L32 84 L32 50 L26 50 L26 44 Z" fill="#ffffff"/>
+        <rect x="44" y="60" width="12" height="24" fill="#ED2C20"/>
+      </svg>
+      <div>
+        <div class="brandname">BYRDSON <span>SERVICES</span></div>
+        <div class="brandsub">Excello Homes</div>
+      </div>
+    </div>
+    <div class="htitle">
+      <h1>Vendor Portal Manager</h1>
+      <p>Turn on the external portal for a vendor, choose what they see, and copy their private link.</p>
+    </div>
   </div>
 
   <div id="setupWarn" class="setup" style="display:none"></div>
