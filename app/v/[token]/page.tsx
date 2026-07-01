@@ -126,15 +126,36 @@ export default async function VendorPortal({ params }: { params: { token: string
 
   return (
     <div className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="logo">B</span>
-          BYRDSON SERVICES
+      <header className="site-header">
+        <div className="logo">
+          <svg
+            className="shield"
+            viewBox="0 0 100 116"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-label="Byrdson shield"
+          >
+            <path
+              d="M50 4 L92 20 L92 60 C92 86 73 104 50 112 C27 104 8 86 8 60 L8 20 Z"
+              fill="#ED2C20"
+              stroke="#ffffff"
+              strokeWidth="3"
+            />
+            <path d="M50 26 L74 44 L74 50 L68 50 L68 84 L32 84 L32 50 L26 50 L26 44 Z" fill="#ffffff" />
+            <rect x="44" y="60" width="12" height="24" fill="#ED2C20" />
+          </svg>
+          <div>
+            <div className="brandname">
+              BYRDSON <span>SERVICES</span>
+            </div>
+            <div className="brandsub">Excello Homes</div>
+          </div>
         </div>
-        <h1 className="page-title">Vendor Portal</h1>
-        <p className="welcome">
-          Welcome{vendor.company ? `, ${vendor.company}` : `, ${vendor.name}`}
-        </p>
+        <div className="htitle">
+          <h1>Vendor Portal</h1>
+          <div className="stamp">
+            Welcome{vendor.company ? `, ${vendor.company}` : `, ${vendor.name}`}
+          </div>
+        </div>
       </header>
 
       <main className="content">
