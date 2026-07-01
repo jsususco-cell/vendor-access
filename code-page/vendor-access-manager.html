@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<!--
+  Byrdson Services — Vendor Portal Manager
+  ========================================
+  A Quickbase CODE PAGE (Settings ▸ Pages ▸ New page). Used by logged-in Byrdson
+  staff to turn on the external vendor portal for a vendor, pick what they can see,
+  and copy their private login-free link.
+
+  Works on your EXISTING vendors in buskqh272 — it does not create new vendor
+  records. The portal token reuses each vendor's existing AccessKey (fid 66); if a
+  vendor has none, one is generated and saved. It never overwrites an AccessKey that
+  already exists.
+
+  Security: embeds NO permanent token. It calls the Quickbase REST API with a
+  TEMPORARY token minted from the signed-in staff member's session, so it only works
+  for authenticated QB users.
+
+  SETUP: set PORTAL_BASE below to your deployed Vercel URL. REALM + field ids are
+  already filled in for this app.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vendor Portal Manager</title>
+<style>
+  :root { --navy:#1b2a4a; --bg:#eef2f5; --line:#e3e8ee; --muted:#6b7280; --accent:#f0a63a; --green:#2e9e6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#1f2a37; font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:960px; margin:0 auto; padding:22px 16px 60px; }
+  .head { background:var(--navy); color:#fff; border-radius:14px; padding:18px 20px; }
+  .head h1 { margin:0; font-size:20px; }
+  .head p { margin:4px 0 0; opacity:.8; font-size:13px; }
+  .bar { display:flex; gap:10px; margin:16px 0; }
+  .bar input { flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:10px; font-size:14px; }
+  button { background:var(--navy); color:#fff; border:0; border-radius:9px; padding:9px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+  button.ghost { background:#eef2f7; color:var(--navy); }
+  button.link { background:var(--green); }
+  button.sm { padding:7px 11px; font-size:12px; }
+  .actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(16,24,40,.07); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; background:#f9fafb; position:sticky; top:0; }
+  tr:last-child td { border-bottom:none; }
+  .vname { font-weight:650; }
+  .vsub { color:var(--muted); font-size:12px; }
+  .flags { display:flex; gap:12px; flex-wrap:wrap; }
+  .flags label { display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer; }
+  .switch { display:flex; align-items:center; gap:6px; font-size:12px; }
+  .err { color:#b42318; font-size:13px; margin-top:10px; }
+  .muted { color:var(--muted); }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s; }
+  .toast.show { opacity:1; }
+  .setup { background:#fff8ec; border:1px solid #f3d9a6; color:#8a5a12; border-radius:12px; padding:12px 14px; font-size:13px; margin-bottom:16px; }
+  .nf-lbl { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:5px; }
+  .nf-sec { margin-top:18px; }
+  .nf-sec > h4 { margin:0 0 10px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .nf-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px 14px; }
+  .nf-field label { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:4px; }
+  .nf-field.chk { align-self:end; }
+  .nf-field.chk label { display:flex; align-items:center; gap:7px; font-weight:500; font-size:13px; cursor:pointer; padding:8px 0; }
+  #newForm input[type=text], #newForm input[type=email], #newForm input[type=date],
+  #newForm select, #newForm textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-size:13px; background:#fff; font-family:inherit; }
+  #newForm textarea { min-height:60px; resize:vertical; }
+  #newForm select[multiple] { min-height:96px; }
+  @media (max-width:640px){ .nf-grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Vendor Portal Manager</h1>
+    <p>Turn on the external portal for a vendor, choose what they see, and copy their private link.</p>
+  </div>
+
+  <div id="setupWarn" class="setup" style="display:none"></div>
+
+  <div class="bar">
+    <input id="search" type="text" placeholder="Search vendors by name or company…" />
+    <button id="searchBtn">Search</button>
+    <button class="ghost" id="recentBtn">Recent</button>
+    <button id="newBtn">+ New vendor</button>
+  </div>
+
+  <div id="newForm" class="card" style="display:none; padding:18px; margin-bottom:16px;">
+    <div style="font-weight:700;">Register a new vendor</div>
+    <div class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
+    <div id="nf_fields"></div>
+    <div style="margin-top:16px; display:flex; gap:8px; align-items:center;">
+      <button id="createBtn">Create &amp; generate link</button>
+      <button class="ghost" id="cancelNew">Cancel</button>
+      <span id="nf_status" class="muted"></span>
+    </div>
+    <div id="nf_result" style="display:none; margin-top:12px;">
+      <div class="nf-lbl">Invite link</div>
+      <div style="display:flex; gap:8px; margin-top:4px;">
+        <input id="nf_link" type="text" readonly style="font-family:monospace; font-size:12px;" />
+        <button class="link" id="nf_copy">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Vendor</th>
+          <th>Active</th>
+          <th>Can view</th>
+          <th style="text-align:right">Invite</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div id="err" class="err"></div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+/* ============================ CONFIG — EDIT ME ============================ */
+const REALM        = "byrdsonservices.quickbase.com";
+const VENDOR_TABLE = "buskqh272";
+const PORTAL_BASE  = "";                 // <-- set after Vercel deploy, e.g. "https://byrdson-vendors.vercel.app"
+const FID = {
+  name:           100,  // Name of Primary Contact Person
+  company:        23,   // Company
+  email:          28,   // Email
+  token:          66,   // AccessKey (reused as the portal token — never overwritten if present)
+  inviteSent:     96,   // Invite Sent? (checkbox — flips true after Send)
+  active:         168,  // Portal: Active
+  canViewJobs:    169,
+  canViewSchedule:170,
+  canViewPhotos:  171,
+  canViewDocs:    172,
+};
+/* ========================================================================= */
+
+const API = "https://api.quickbase.com/v1";
+let tempToken = null;
+const $ = (id) => document.getElementById(id);
+
+function realm() { return REALM || location.hostname; }
+
+async function getTempToken() {
+  if (tempToken) return tempToken;
+  const res = await fetch(`${API}/auth/temporary/${VENDOR_TABLE}`, {
+    method: "GET", credentials: "include", headers: { "QB-Realm-Hostname": realm() },
+  });
+  if (!res.ok) throw new Error("Could not authenticate with Quickbase (" + res.status + ")");
+  tempToken = (await res.json()).temporaryAuthorization;
+  return tempToken;
+}
+async function qb(path, method, body) {
+  const token = await getTempToken();
+  const res = await fetch(API + path, {
+    method, credentials: "include",
+    headers: { "QB-Realm-Hostname": realm(), "Authorization": "QB-TEMP-TOKEN " + token, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error("Quickbase error " + res.status + ": " + (await res.text()));
+  return res.json();
+}
+
+function newAccessKey() {
+  const a = new Uint8Array(32); crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function linkFor(token) {
+  const base = PORTAL_BASE.replace(/\/$/, "");
+  return base ? `${base}/v/${token}` : `/v/${token}`;
+}
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1800);
+}
+function showErr(m) { $("err").textContent = m || ""; }
+
+async function save(rid, fid, value) {
+  await qb("/records", "POST", { to: VENDOR_TABLE, data: [{ "3": { value: rid }, [fid]: { value } }] });
+}
+
+// Reuse the vendor's AccessKey; generate + save one only if it's empty.
+async function ensureKey(rid, currentKey) {
+  let key = currentKey;
+  if (!key) { key = newAccessKey(); await save(rid, FID.token, key); }
+  return key;
+}
+
+function inviteEmail(email, name, link) {
+  const subject = "Your Byrdson Services vendor portal access";
+  const body =
+    "Hello" + (name ? " " + name : "") + ",\n\n" +
+    "You've been given access to the Byrdson Services vendor portal. Use your private link " +
+    "below to view your assigned jobs, schedule, photos, and documents:\n\n" +
+    link + "\n\n" +
+    "This link is unique to you — please don't share it.\n\n" +
+    "Thank you,\nByrdson Services";
+  return "mailto:" + encodeURIComponent(email) +
+    "?subject=" + encodeURIComponent(subject) +
+    "&body=" + encodeURIComponent(body);
+}
+
+// Open the staff mail client with the invite pre-filled (works inside the QB iframe).
+function openMail(href) {
+  const a = document.createElement("a");
+  a.href = href; a.style.display = "none";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function checkbox(rid, fid, checked, label) {
+  const id = `c_${rid}_${fid}`;
+  return `<label><input type="checkbox" id="${id}" ${checked ? "checked" : ""}
+    onchange="onToggle(${rid}, ${fid}, this.checked)"> ${label}</label>`;
+}
+
+window.onToggle = async (rid, fid, checked) => {
+  try { await save(rid, fid, checked); toast("Saved"); }
+  catch (e) { showErr(String(e.message || e)); }
+};
+window.__vendors = {};
+
+window.onCopy = async (rid) => {
+  showErr("");
+  if (!PORTAL_BASE) return showErr("Set PORTAL_BASE (your Vercel URL) in the Code Page CONFIG first.");
+  try {
+    const v = window.__vendors[rid];
+    v.key = await ensureKey(rid, v.key);
+    await navigator.clipboard.writeText(linkFor(v.key)).catch(() => {});
+    toast("Invite link copied");
+  } catch (e) { showErr(String(e.message || e)); }
+};
+
+window.onSend = async (rid) => {
+  showErr("");
+  if (!PORTAL_BASE) return showErr("Set PORTAL_BASE (your Vercel URL) in the Code Page CONFIG first.");
+  const v = window.__vendors[rid];
+  if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
+  try {
+    v.key = await ensureKey(rid, v.key);
+    openMail(inviteEmail(v.email, v.name, linkFor(v.key)));
+    if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
+    const btn = $(`send_${rid}`);
+    if (btn) btn.textContent = "Resend invite";
+    toast("Invite email opened");
+  } catch (e) { showErr(String(e.message || e)); }
+};
+
+async function load(searchTerm) {
+  showErr("");
+  const tbody = $("rows");
+  tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading…</td></tr>';
+  let where = "";
+  if (searchTerm) {
+    const s = searchTerm.replace(/['"{}]/g, "");
+    where = `{${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'}`;
+  }
+  try {
+    const r = await qb("/records/query", "POST", {
+      from: VENDOR_TABLE,
+      select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs],
+      where: where || undefined,
+      sortBy: [{ fieldId: 3, order: "DESC" }],
+      options: { top: 50 },
+    });
+    const rows = (r.data || []).map((rec) => {
+      const g = (f) => (rec[f] ? rec[f].value : "");
+      const rid = g(3);
+      const name = g(FID.name) || "";
+      const company = g(FID.company) || "";
+      const email = g(FID.email) || "";
+      const sent = !!g(FID.inviteSent);
+      window.__vendors[rid] = { key: g(FID.token) || "", email, name, sent };
+      const flags =
+        checkbox(rid, FID.canViewJobs, g(FID.canViewJobs), "Jobs") +
+        checkbox(rid, FID.canViewSchedule, g(FID.canViewSchedule), "Schedule") +
+        checkbox(rid, FID.canViewPhotos, g(FID.canViewPhotos), "Photos") +
+        checkbox(rid, FID.canViewDocs, g(FID.canViewDocs), "Docs");
+      const activeBox = `<span class="switch"><input type="checkbox" ${g(FID.active) ? "checked" : ""}
+        onchange="onToggle(${rid}, ${FID.active}, this.checked)"></span>`;
+      const sendLabel = sent ? "Resend invite" : "Send invite";
+      const noEmail = email ? "" : ' title="No email on file" disabled style="opacity:.5;cursor:not-allowed"';
+      return `<tr>
+        <td><div class="vname">${company || name || "(no name)"}</div><div class="vsub">${company ? name : ""}${email ? " · " + email : ""}</div></td>
+        <td>${activeBox}</td>
+        <td><div class="flags">${flags}</div></td>
+        <td><div class="actions">
+          <button class="ghost sm" onclick="onCopy(${rid})">Copy</button>
+          <button class="link sm" id="send_${rid}" onclick="onSend(${rid})"${noEmail}>${sendLabel}</button>
+        </div></td>
+      </tr>`;
+    });
+    tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="muted">No vendors found.</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="err">${String(e.message || e)}</td></tr>`;
+  }
+}
+
+// config check
+(function () {
+  const missing = Object.entries(FID).filter(([, v]) => !v).map(([k]) => k);
+  const warn = $("setupWarn");
+  const notes = [];
+  if (missing.length) notes.push("Missing field ids: " + missing.join(", "));
+  if (!PORTAL_BASE) notes.push("PORTAL_BASE is not set — set it to your Vercel URL so links resolve.");
+  if (notes.length) { warn.style.display = "block"; warn.innerHTML = notes.join("<br>"); }
+})();
+
+// ---- New vendor registration form ----
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const STATES = ["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","District of Columbia","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Puerto Rico","Rhode Island","South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"];
+const ENV_SUBTYPES = ["Environmental Inspector","Environmental Risk Assessor","Asbestos Abatement","Lead Abatement","General Construction","Specialty Trade","Engineer","Architect"];
+
+// Each field: fid, label, type. type ∈ text|email|date|checkbox|select|multiselect|multitext|textarea|rating
+const FORM = [
+  { title: "Contact & Company", fields: [
+    { fid: 23,  label: "Company *",               type: "text", required: true },
+    { fid: 100, label: "Primary Contact Person",  type: "text" },
+    { fid: 28,  label: "Email",                   type: "email" },
+    { fid: 26,  label: "Cell",                    type: "text" },
+    { fid: 27,  label: "Phone",                   type: "text" },
+    { fid: 32,  label: "Fax",                     type: "text" },
+  ]},
+  { title: "Address", fields: [
+    { fid: 7,  label: "Street 1",     type: "text" },
+    { fid: 8,  label: "Street 2",     type: "text" },
+    { fid: 9,  label: "City",         type: "text" },
+    { fid: 10, label: "State/Region", type: "select", choices: STATES },
+    { fid: 11, label: "Postal Code",  type: "text" },
+    { fid: 12, label: "Country",      type: "text" },
+  ]},
+  { title: "Classification & Trade", fields: [
+    { fid: 87,  label: "Classification",   type: "select", choices: ["Subcontractor","Vendor","Professional Services","Entity","Non-PO Subs/Vendor"] },
+    { fid: 34,  label: "Division/Trade",   type: "text" },
+    { fid: 37,  label: "Divisions/Trades (comma-separated)", type: "multitext" },
+    { fid: 161, label: "Primary Trade",    type: "text" },
+    { fid: 143, label: "ENV Sub Type (hold Ctrl/Cmd to multi-select)", type: "multiselect", choices: ENV_SUBTYPES },
+  ]},
+  { title: "Compliance & Documents", fields: [
+    { fid: 41,  label: "Tax ID",                   type: "text" },
+    { fid: 31,  label: "W9 (date)",                type: "date" },
+    { fid: 120, label: "W-9 on File",              type: "checkbox" },
+    { fid: 30,  label: "Byrdson Master Agreement", type: "date" },
+    { fid: 119, label: "Insurance Expiration",     type: "date" },
+    { fid: 144, label: "EPA Lead-Safe Firm #",     type: "text" },
+    { fid: 145, label: "DRNA LBP Mitigation Cert", type: "text" },
+    { fid: 146, label: "LBP Cert Expiration",      type: "date" },
+    { fid: 147, label: "DRNA Asbestos Cert",       type: "text" },
+    { fid: 148, label: "Asbestos Cert Expiration", type: "date" },
+  ]},
+  { title: "Payment / ACH", fields: [
+    { fid: 123, label: "Mode of Payment",   type: "select", choices: ["ACH","Check","Credit Card"] },
+    { fid: 124, label: "Bank Name",         type: "text" },
+    { fid: 125, label: "Account Name",      type: "text" },
+    { fid: 126, label: "Account Number",    type: "text" },
+    { fid: 127, label: "ACH Routing Number",type: "text" },
+    { fid: 128, label: "Account Type",      type: "text" },
+    { fid: 129, label: "Payee Name",        type: "text" },
+    { fid: 130, label: "Mailing Address",   type: "text" },
+  ]},
+  { title: "Status & Vetting", fields: [
+    { fid: 25,  label: "Activation",           type: "select", choices: ["No Email","Active","Ready for Invite","Pending"] },
+    { fid: 158, label: "Vetting Status",       type: "select", choices: ["Prospect","Outreach","Vetting","Approved","Active","Do-Not-Use"] },
+    { fid: 160, label: "Rating (0–5)",         type: "rating", choices: ["","0","1","2","3","4","5"] },
+    { fid: 29,  label: "Linked to QuickBooks", type: "select", choices: ["Unlinked","Linked","Pending"] },
+    { fid: 157, label: "Responsive?",          type: "checkbox" },
+    { fid: 149, label: "ENV Active for PR",    type: "checkbox" },
+    { fid: 150, label: "ENV Sister Company",   type: "checkbox" },
+    { fid: 152, label: "ENV Notes",            type: "textarea" },
+  ]},
+  { title: "Portal Access", fields: [
+    { fid: FID.active,          label: "Active",           type: "checkbox", default: true },
+    { fid: FID.canViewJobs,     label: "Can View Jobs",    type: "checkbox", default: true },
+    { fid: FID.canViewSchedule, label: "Can View Schedule",type: "checkbox", default: true },
+    { fid: FID.canViewPhotos,   label: "Can View Photos",  type: "checkbox" },
+    { fid: FID.canViewDocs,     label: "Can View Docs",    type: "checkbox" },
+  ]},
+];
+
+function renderField(f) {
+  const id = `nf_${f.fid}`;
+  if (f.type === "checkbox") {
+    return `<div class="nf-field chk"><label><input type="checkbox" id="${id}" ${f.default ? "checked" : ""}> ${f.label}</label></div>`;
+  }
+  let input;
+  if (f.type === "textarea") {
+    input = `<textarea id="${id}"></textarea>`;
+  } else if (f.type === "select" || f.type === "rating") {
+    const opts = ["<option value=\"\"></option>"]
+      .concat((f.choices || []).filter((c) => c !== "").map((c) => `<option value="${c}">${c}</option>`));
+    input = `<select id="${id}">${opts.join("")}</select>`;
+  } else if (f.type === "multiselect") {
+    input = `<select id="${id}" multiple>${(f.choices || []).map((c) => `<option value="${c}">${c}</option>`).join("")}</select>`;
+  } else if (f.type === "date") {
+    input = `<input id="${id}" type="date" />`;
+  } else if (f.type === "email") {
+    input = `<input id="${id}" type="email" />`;
+  } else {
+    input = `<input id="${id}" type="text" />`;
+  }
+  return `<div class="nf-field"><label>${f.label}</label>${input}</div>`;
+}
+
+function renderForm() {
+  $("nf_fields").innerHTML = FORM.map((sec) =>
+    `<div class="nf-sec"><h4>${sec.title}</h4><div class="nf-grid">${sec.fields.map(renderField).join("")}</div></div>`
+  ).join("");
+}
+
+// Read a field's value in the shape the QB API expects, or null to omit it.
+function collectField(f) {
+  const el = $(`nf_${f.fid}`);
+  if (!el) return null;
+  if (f.type === "checkbox") return { value: el.checked };
+  if (f.type === "multiselect") {
+    const vals = [...el.selectedOptions].map((o) => o.value).filter(Boolean);
+    return vals.length ? { value: vals } : null;
+  }
+  if (f.type === "multitext") {
+    const vals = el.value.split(",").map((s) => s.trim()).filter(Boolean);
+    return vals.length ? { value: vals } : null;
+  }
+  if (f.type === "rating") {
+    return el.value === "" ? null : { value: Number(el.value) };
+  }
+  const v = el.value.trim();
+  return v ? { value: v } : null;
+}
+
+$("newBtn").onclick = () => {
+  const f = $("newForm");
+  const opening = f.style.display === "none";
+  f.style.display = opening ? "block" : "none";
+  if (opening) { $("nf_result").style.display = "none"; $("nf_23").focus(); }
+};
+$("cancelNew").onclick = () => { $("newForm").style.display = "none"; };
+
+$("createBtn").onclick = async () => {
+  showErr("");
+  const company = $("nf_23").value.trim();
+  if (!company) return showErr("Company is required.");
+
+  const data = {};
+  for (const sec of FORM) for (const f of sec.fields) {
+    const cell = collectField(f);
+    if (cell !== null) data[f.fid] = cell;
+  }
+
+  const status = $("nf_status");
+  $("createBtn").disabled = true;
+  try {
+    status.textContent = "Creating…";
+    const res = await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
+    const rid = res.metadata.createdRecordIds[0];
+
+    // Let the existing AccessKey automation populate fid 66; poll briefly for it.
+    status.textContent = "Generating secure key…";
+    let key = "";
+    for (let i = 0; i < 4 && !key; i++) {
+      await sleep(1200);
+      const q = await qb("/records/query", "POST", {
+        from: VENDOR_TABLE, select: [FID.token], where: `{3.EX.'${rid}'}`,
+      });
+      key = q.data?.[0]?.[FID.token]?.value || "";
+    }
+    if (!key) { key = newAccessKey(); await save(rid, FID.token, key); } // fallback
+
+    status.textContent = "Vendor #" + rid + " created.";
+    $("nf_link").value = linkFor(key);
+    $("nf_result").style.display = "block";
+    renderForm(); // reset fields for the next entry
+    load("");
+  } catch (e) {
+    status.textContent = "";
+    showErr(String(e.message || e));
+  } finally {
+    $("createBtn").disabled = false;
+  }
+};
+
+$("nf_copy").onclick = () => {
+  const el = $("nf_link"); el.select();
+  navigator.clipboard.writeText(el.value).catch(() => {});
+  toast("Invite link copied");
+};
+
+renderForm();
+
+$("searchBtn").onclick = () => load($("search").value.trim());
+$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim()); });
+$("recentBtn").onclick = () => { $("search").value = ""; load(""); };
+load("");
+</script>
+</body>
+</html>

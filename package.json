@@ -1,0 +1,22 @@
+{
+  "name": "byrdson-vendor-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Login-free vendor portal for Byrdson Services, backed by Quickbase.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "introspect": "node --env-file=.env.local scripts/introspect.mjs"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.0",
+    "@types/react": "18.3.3",
+    "typescript": "5.5.3"
+  }
+}
