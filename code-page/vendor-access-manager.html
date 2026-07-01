@@ -130,9 +130,9 @@
     <div class="lo-row">
       <input id="lo_link" readonly />
       <button class="ghost sm" id="lo_copy">Copy</button>
-      <a id="lo_mail" class="mailbtn" target="_blank" rel="noopener">Email vendor</a>
+      <a id="lo_mail" class="mailbtn" target="_blank" rel="noopener">Email in Gmail</a>
     </div>
-    <div class="muted" style="font-size:11px; margin-top:7px;">If Copy is blocked by the dashboard, the link above is already selected — press Ctrl+C. Use “Email vendor” to open a pre-filled message.</div>
+    <div class="muted" style="font-size:11px; margin-top:7px;">If Copy is blocked by the dashboard, the link above is already selected — press Ctrl+C. Use “Email in Gmail” to open a pre-filled Gmail message.</div>
   </div>
 
   <div class="card">
@@ -253,13 +253,14 @@ function showLinkOut(v, link) {
     (v.name || v.company || "Vendor") + (v.email ? "  ·  " + v.email : "  ·  no email on file");
   $("lo_link").value = link;
   const mail = $("lo_mail");
-  if (v.email) { mail.href = inviteEmail(v.email, v.name, link); mail.style.display = ""; }
+  if (v.email) { mail.href = gmailUrl(v.email, v.name, link); mail.style.display = ""; }
   else { mail.style.display = "none"; }
   $("linkOut").style.display = "block";
   $("lo_link").focus(); $("lo_link").select();
 }
 
-function inviteEmail(email, name, link) {
+// Build a Gmail web-compose URL, pre-filled — opens in the browser (not Outlook).
+function gmailUrl(email, name, link) {
   const subject = "Your Byrdson Services vendor portal access";
   const body =
     "Hello" + (name ? " " + name : "") + ",\n\n" +
@@ -268,15 +269,16 @@ function inviteEmail(email, name, link) {
     link + "\n\n" +
     "This link is unique to you — please don't share it.\n\n" +
     "Thank you,\nByrdson Services";
-  return "mailto:" + encodeURIComponent(email) +
-    "?subject=" + encodeURIComponent(subject) +
+  return "https://mail.google.com/mail/?view=cm&fs=1&tf=1" +
+    "&to=" + encodeURIComponent(email) +
+    "&su=" + encodeURIComponent(subject) +
     "&body=" + encodeURIComponent(body);
 }
 
-// Open the staff mail client with the invite pre-filled (works inside the QB iframe).
+// Open the Gmail compose window in a new browser tab (works inside the QB iframe).
 function openMail(href) {
   const a = document.createElement("a");
-  a.href = href; a.style.display = "none";
+  a.href = href; a.target = "_blank"; a.rel = "noopener"; a.style.display = "none";
   document.body.appendChild(a); a.click(); a.remove();
 }
 
@@ -314,11 +316,11 @@ window.onSend = async (rid) => {
     v.key = await ensureKey(rid, v.key);
     const link = linkFor(v.key);
     showLinkOut(v, link);
-    openMail(inviteEmail(v.email, v.name, link)); // best-effort auto-open
+    openMail(gmailUrl(v.email, v.name, link)); // opens Gmail compose in a new tab
     if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
     const btn = $(`send_${rid}`);
     if (btn) btn.textContent = "Resend invite";
-    toast("Invite ready — click 'Email vendor' below if your mail app didn't open");
+    toast("Gmail compose opened — click 'Email in Gmail' below if the tab was blocked");
   } catch (e) { showErr(String(e.message || e)); }
 };
 
