@@ -11,6 +11,9 @@ export const QB_TOKEN = process.env.QB_USER_TOKEN ?? "";
 export const TABLES = {
   vendors: process.env.QB_TABLE_VENDORS ?? "buskqh272",
   jobs: process.env.QB_TABLE_JOBS ?? "buskqh3eh",
+  schedule: "buskqh27f",
+  attachments: "buskqh28a",
+  purchaseOrders: "bukmrrvkz",
 };
 
 // ---- buskqh272 : Vendors (holds accounts + unique invite tokens + access flags) ----
@@ -39,6 +42,46 @@ export const JOB_FIELDS = {
   // Links an assignment to a vendor: fid 8 stores the vendor's Record ID#.
   vendorLink: 8, // Related Sub/Vendor
   vendorLinkIsName: false,
+};
+
+// ---- buskqh27f : Schedule Items (milestones, phases, dates) ----
+export const SCHEDULE_FIELDS = {
+  recordId: 3,
+  title: 8, // Title
+  phase: 11, // Phase (e.g. "1. Pre Construction")
+  percentComplete: 10, // Percent Complete
+  startDate: 12, // Start Date
+  endDate: 92, // Editable End Date
+  relatedJob: 20, // Related Job → buskqh27b
+  jobName: 21, // Job Name (lookup)
+  relatedSubVendor: 343, // Related Sub/Vendor → buskqh272
+};
+
+// ---- buskqh28a : Attachments (files, photos, compliance docs) ----
+export const ATTACHMENT_FIELDS = {
+  recordId: 3,
+  type: 6, // Type - Historical (Image / File / W9 / BMSA / GLC / etc.)
+  expirationDate: 7, // Expiration Date
+  relatedSubVendor: 8, // Related Sub/Vendor → buskqh272
+  subVendorCompany: 9, // Sub/Vendor - Company (lookup)
+  attachment: 10, // Attachment (file field)
+  relatedJob: 21, // Related Job → buskqh27b
+  jobName: 22, // Job Name (lookup)
+  cancelledJob: 28, // Cancelled Job (lookup)
+};
+
+// ---- bukmrrvkz : Purchase Orders ----
+export const PO_FIELDS = {
+  recordId: 3,
+  title: 6, // Title
+  poNumber: 17, // PO #
+  poStatus: 15, // PO Status (Approved / Unreleased / Released)
+  workStatus: 16, // Work Status Options
+  relatedJob: 13, // Related Job → buskqh27b
+  jobName: 14, // Job Name (lookup)
+  relatedSubVendor: 21, // Related Sub/Vendor → buskqh272
+  performedBy: 22, // Performed By (lookup)
+  email: 45, // Email (lookup)
 };
 
 export function sectionConfigured(fids: number[]): boolean {

@@ -3,10 +3,16 @@ import {
   TABLES,
   VENDOR_FIELDS as V,
   JOB_FIELDS as J,
+  SCHEDULE_FIELDS as S,
+  ATTACHMENT_FIELDS as A,
+  PO_FIELDS as P,
   sectionConfigured,
 } from "@/lib/config";
+import { VendorPortalView, extractAttachments } from "@/components/VendorPortalView";
 
 export const dynamic = "force-dynamic";
+
+/* ---------- Types ---------- */
 
 interface VendorAccess {
   record: QBRecord;
@@ -19,13 +25,13 @@ interface VendorAccess {
   recordId: number;
 }
 
+/* ---------- Data loaders ---------- */
+
 async function loadVendor(token: string): Promise<VendorAccess | null> {
-  if (V.token <= 0) return null; // not configured yet
+  if (V.token <= 0) return null;
   const safe = qbSafe(token);
   if (!safe) return null;
 
-  // Only return an active/enabled invite. If the "active" flag isn't mapped yet,
-  // fall back to matching on the token alone.
   const where =
     V.active > 0
       ? `{${V.token}.EX.'${safe}'}AND{${V.active}.EX.'1'}`
@@ -61,7 +67,7 @@ async function loadJobs(vendor: VendorAccess): Promise<QBRecord[]> {
   if (!sectionConfigured([J.name, J.vendorLink])) return [];
   const key = J.vendorLinkIsName ? qbSafe(vendor.name) : String(vendor.recordId);
   let where = `{${J.vendorLink}.EX.'${key}'}`;
-  if (J.cancelled > 0) where += `AND{${J.cancelled}.EX.'0'}`; // hide cancelled jobs
+  if (J.cancelled > 0) where += `AND{${J.cancelled}.EX.'0'}`;
   const select = [J.recordId, J.name, J.status, J.startDate, J.dueDate, J.address].filter(
     (f) => f > 0
   );
@@ -70,21 +76,38 @@ async function loadJobs(vendor: VendorAccess): Promise<QBRecord[]> {
   return res.data ?? [];
 }
 
-function fmtDate(value: unknown): string {
-  if (!value) return "";
-  const d = new Date(String(value));
-  if (isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+async function loadSchedule(vendor: VendorAccess): Promise<QBRecord[]> {
+  // Schedule Items linked directly to this vendor via Related Sub/Vendor (fid 343)
+  const where = `{${S.relatedSubVendor}.EX.'${vendor.recordId}'}`;
+  const select = [
+    S.recordId, S.title, S.phase, S.percentComplete,
+    S.startDate, S.endDate, S.jobName,
+  ].filter((f) => f > 0);
+  const sortBy = [{ fieldId: S.startDate, order: "ASC" as const }];
+  const res = await queryRecords({ from: TABLES.schedule, where, select, sortBy });
+  return res.data ?? [];
 }
 
-// "Job - Average Percent Complete" comes back as a fraction (0.45) or a number (45).
-function fmtStatus(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "";
-  const n = Number(value);
-  if (isNaN(n)) return String(value);
-  const pct = n <= 1 ? n * 100 : n;
-  return `${Math.round(pct)}% complete`;
+async function loadAttachments(vendor: VendorAccess): Promise<QBRecord[]> {
+  // All attachments for this vendor (vendor-level + via jobs)
+  const where = `{${A.relatedSubVendor}.EX.'${vendor.recordId}'}`;
+  const select = [
+    A.recordId, A.type, A.expirationDate, A.attachment, A.jobName,
+  ].filter((f) => f > 0);
+  const res = await queryRecords({ from: TABLES.attachments, where, select });
+  return res.data ?? [];
 }
+
+async function loadPurchaseOrders(vendor: VendorAccess): Promise<QBRecord[]> {
+  const where = `{${P.relatedSubVendor}.EX.'${vendor.recordId}'}`;
+  const select = [
+    P.recordId, P.title, P.poNumber, P.poStatus, P.workStatus, P.jobName,
+  ].filter((f) => f > 0);
+  const res = await queryRecords({ from: TABLES.purchaseOrders, where, select });
+  return res.data ?? [];
+}
+
+/* ---------- Error / empty states ---------- */
 
 function InvalidLink() {
   return (
@@ -100,6 +123,19 @@ function InvalidLink() {
   );
 }
 
+function ErrorState() {
+  return (
+    <div className="center">
+      <div className="card">
+        <h1>Temporarily unavailable</h1>
+        <p>We couldn&apos;t load your portal right now. Please try again shortly.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Main page ---------- */
+
 export default async function VendorPortal({ params }: { params: { token: string } }) {
   let vendor: VendorAccess | null = null;
   let loadError = false;
@@ -109,155 +145,28 @@ export default async function VendorPortal({ params }: { params: { token: string
     loadError = true;
   }
 
-  if (loadError) {
-    return (
-      <div className="center">
-        <div className="card">
-          <h1>Temporarily unavailable</h1>
-          <p>We couldn&apos;t load your portal right now. Please try again shortly.</p>
-        </div>
-      </div>
-    );
-  }
+  if (loadError) return <ErrorState />;
   if (!vendor) return <InvalidLink />;
 
-  const jobs = vendor.jobs ? await loadJobs(vendor).catch(() => []) : [];
+  // Fetch all data sections in parallel
+  const [jobs, scheduleItems, attachmentRecords, purchaseOrders] = await Promise.all([
+    vendor.jobs ? loadJobs(vendor).catch(() => [] as QBRecord[]) : ([] as QBRecord[]),
+    vendor.schedule ? loadSchedule(vendor).catch(() => [] as QBRecord[]) : ([] as QBRecord[]),
+    (vendor.photos || vendor.docs) ? loadAttachments(vendor).catch(() => [] as QBRecord[]) : ([] as QBRecord[]),
+    vendor.jobs ? loadPurchaseOrders(vendor).catch(() => [] as QBRecord[]) : ([] as QBRecord[]),
+  ]);
+
+  const attachments = extractAttachments(attachmentRecords);
   const needsMapping = V.token > 0 && !sectionConfigured([J.name, J.vendorLink]);
 
   return (
-    <div className="shell">
-      <header className="site-header">
-        <div className="logo">
-          <svg
-            className="shield"
-            viewBox="0 0 100 116"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-label="Byrdson shield"
-          >
-            <path
-              d="M50 4 L92 20 L92 60 C92 86 73 104 50 112 C27 104 8 86 8 60 L8 20 Z"
-              fill="#ED2C20"
-              stroke="#ffffff"
-              strokeWidth="3"
-            />
-            <path d="M50 26 L74 44 L74 50 L68 50 L68 84 L32 84 L32 50 L26 50 L26 44 Z" fill="#ffffff" />
-            <rect x="44" y="60" width="12" height="24" fill="#ED2C20" />
-          </svg>
-          <div>
-            <div className="brandname">
-              BYRDSON <span>SERVICES</span>
-            </div>
-            <div className="brandsub">Excello Homes</div>
-          </div>
-        </div>
-        <div className="htitle">
-          <h1>Vendor Portal</h1>
-          <div className="stamp">
-            Welcome{vendor.company ? `, ${vendor.company}` : `, ${vendor.name}`}
-          </div>
-        </div>
-      </header>
-
-      <main className="content">
-        {needsMapping && (
-          <div className="notice">
-            Setup in progress — job field mapping isn&apos;t complete yet. Run
-            <code> npm run introspect</code> and finish <code>lib/config.ts</code>.
-          </div>
-        )}
-
-        {vendor.jobs && (
-          <>
-            <div className="section-label">Assigned Jobs</div>
-            <div className="card full">
-              {jobs.length === 0 ? (
-                <div className="empty">No jobs are currently assigned to you.</div>
-              ) : (
-                jobs.map((job, i) => (
-                  <div className="job" key={i}>
-                    <div>
-                      <div className="j-name">{String(fv(job, J.name) ?? "Job")}</div>
-                      <div className="j-meta">
-                        {[
-                          fv(job, J.address),
-                          J.dueDate > 0 && fv(job, J.dueDate)
-                            ? `Due ${fmtDate(fv(job, J.dueDate))}`
-                            : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </div>
-                    </div>
-                    {J.status > 0 && fmtStatus(fv(job, J.status)) ? (
-                      <span className="pill">{fmtStatus(fv(job, J.status))}</span>
-                    ) : null}
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-
-        {vendor.schedule && (
-          <>
-            <div className="section-label">Schedule</div>
-            <div className="card full">
-              {jobs.filter((j) => fv(j, J.dueDate) || fv(j, J.startDate)).length === 0 ? (
-                <div className="empty">No scheduled dates yet.</div>
-              ) : (
-                jobs.map((job, i) => {
-                  const start = fv(job, J.startDate);
-                  const due = fv(job, J.dueDate);
-                  if (!start && !due) return null;
-                  return (
-                    <div className="job" key={i}>
-                      <div>
-                        <div className="j-name">{String(fv(job, J.name) ?? "Job")}</div>
-                        <div className="j-meta">
-                          {start ? `Start ${fmtDate(start)}` : ""}
-                          {start && due ? " · " : ""}
-                          {due ? `Due ${fmtDate(due)}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </>
-        )}
-
-        {(vendor.photos || vendor.docs) && (
-          <>
-            <div className="section-label">Resources</div>
-            <div className="grid">
-              {vendor.photos && (
-                <div className="card tile">
-                  <div className="icon">▣</div>
-                  <div className="t-title">Photos &amp; Receipts</div>
-                  <div className="t-sub">Field photos and receipts</div>
-                </div>
-              )}
-              {vendor.docs && (
-                <div className="card tile">
-                  <div className="icon">▤</div>
-                  <div className="t-title">Documents &amp; Notes</div>
-                  <div className="t-sub">Reports and shared files</div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {!vendor.jobs && !vendor.schedule && !vendor.photos && !vendor.docs && (
-          <div className="notice">
-            No sections have been enabled for your account yet. Your Byrdson project
-            manager will grant access shortly.
-          </div>
-        )}
-
-        <div className="footnote">Byrdson Services · Private vendor access</div>
-      </main>
-    </div>
+    <VendorPortalView
+      vendor={vendor}
+      jobs={jobs}
+      scheduleItems={scheduleItems}
+      attachments={attachments}
+      purchaseOrders={purchaseOrders}
+      needsMapping={needsMapping}
+    />
   );
 }
