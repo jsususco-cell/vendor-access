@@ -31,9 +31,17 @@ export async function POST(req: Request) {
         if (!p.schedule) return NextResponse.json({ error: "no access" }, { status: 403 });
         return NextResponse.json({ items: await getSchedule(id) });
 
-      case "purchase-orders":
+      case "purchase-orders": {
         if (!p.jobs) return NextResponse.json({ error: "no access" }, { status: 403 });
-        return NextResponse.json({ items: await getPurchaseOrders(id) });
+        const result = await getPurchaseOrders({
+          vendorId: id,
+          skip: body.skip ? Number(body.skip) : undefined,
+          top: body.top ? Number(body.top) : undefined,
+          status: body.status ? String(body.status) : undefined,
+          search: body.search ? String(body.search) : undefined,
+        });
+        return NextResponse.json(result);
+      }
 
       case "daily-logs":
         return NextResponse.json({ items: await getDailyLogs(id) });

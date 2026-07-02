@@ -311,3 +311,17 @@ body {
 .fv-pg-btn:not(:disabled):hover { background: rgba(255,255,255,.22); }
 .fv-pg-info { color: #b9c6df; font-size: 12px; font-weight: 600; min-width: 60px; text-align: center; }
 .fv-loading { color: #b9c6df; font-size: 13px; padding: 24px; text-align: center; }
+
+/* ===== Purchase Order search / filter / pagination ===== */
+.po-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.po-input { flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; background: #fff; min-width: 0; }
+.po-input:focus { border-color: var(--navy2); outline: none; box-shadow: 0 0 0 2px rgba(15,46,99,.12); }
+.po-status { max-width: 110px; }
+.po-btn { background: var(--navy); color: #fff; border: 0; border-radius: 9px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+
+.po-pages { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 14px 0 4px; }
+.po-pg-btn { background: var(--card); border: 1px solid var(--line); color: var(--ink); min-width: 32px; height: 32px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; display: grid; place-items: center; padding: 0 6px; }
+.po-pg-btn:hover:not(:disabled):not(.po-pg-active) { border-color: var(--navy2); }
+.po-pg-btn:disabled { opacity: .35; cursor: default; }
+.po-pg-active { background: var(--navy); color: #fff; border-color: var(--navy); }
+.po-pg-ellipsis { color: var(--muted); width: 32px; text-align: center; font-size: 14px; user-select: none; }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 
 const FileViewer = dynamic(() => import("./FileViewer"), { ssr: false });
@@ -128,9 +128,7 @@ export default function PortalClient({
         <ListModal title="Schedule" api={api} action="schedule" onClose={() => setModal(null)} empty="No schedule items yet." row={rowSchedule} detail={detailSchedule} />
       )}
       {modal === "jobs" && <JobsModal jobs={jobs} api={api} onViewFile={openFileViewer} onClose={() => setModal(null)} />}
-      {modal === "pos" && (
-        <ListModal title="Purchase Orders" api={api} action="purchase-orders" onClose={() => setModal(null)} empty="No purchase orders yet." row={rowPO} detail={detailPO} />
-      )}
+      {modal === "pos" && <POModal api={api} onClose={() => setModal(null)} />}
 
       {viewFile && (
         <FileViewer
@@ -292,6 +290,153 @@ function JobsModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; 
       {jobs.length === 0 ? <div className="m-muted">No jobs are currently assigned to you.</div> : jobs.map((j, i) => (
         <Row key={i} onClick={() => open(j)} main={j.name} meta={[String(j.address || ""), j.due ? "Due " + fmtDate(j.due) : ""].filter(Boolean).join(" · ")} />
       ))}
+    </Modal>
+  );
+}
+
+/* ---------- Purchase Orders with search, status filter, pagination ---------- */
+const PAGE = 10;
+
+function POModal({ api, onClose }: { api: any; onClose: () => void }) {
+  const [items, setItems] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sel, setSel] = useState<any | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const statusRef = useRef<HTMLInputElement>(null);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE));
+
+  const load = useCallback(
+    async (pg: number, s: string, st: string) => {
+      setLoading(true);
+      try {
+        const d = await api("purchase-orders", {
+          skip: (pg - 1) * PAGE,
+          top: PAGE,
+          search: s || undefined,
+          status: st || undefined,
+        });
+        setItems(d.items ?? []);
+        setTotal(d.total ?? 0);
+      } catch {
+        // keep whatever we have
+      } finally {
+        setLoading(false);
+      }
+    },
+    [api],
+  );
+
+  useEffect(() => {
+    load(1, search, status);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function applyFilters() {
+    setPage(1);
+    load(1, search, status);
+  }
+
+  function goPage(pg: number) {
+    if (pg < 1 || pg > totalPages || pg === page) return;
+    setPage(pg);
+    load(pg, search, status);
+  }
+
+  // Build visible page numbers (show up to 5 with ellipsis)
+  function pageNumbers(): (number | "...")[] {
+    const pages: (number | "...")[] = [];
+    const max = 5;
+    let start = Math.max(1, page - Math.floor(max / 2));
+    let end = start + max - 1;
+    if (end > totalPages) {
+      end = totalPages;
+      start = Math.max(1, end - max + 1);
+    }
+    if (start > 1) pages.push(1, "...");
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (end < totalPages) pages.push("...", totalPages);
+    return pages;
+  }
+
+  if (sel) {
+    return (
+      <Modal title="Purchase Order" onClose={onClose} onBack={() => setSel(null)}>
+        <div className="detail">
+          <KV label="PO #" value={sel.poNum} />
+          <KV label="Title" value={sel.title} />
+          <KV label="Job" value={sel.job} />
+          <KV label="Status" value={sel.status} />
+          <KV label="Total" value={sel.total ? money(sel.total) : ""} />
+          <KV label="Date" value={sel.date ? fmtDate(sel.date) : ""} />
+          <KV label="Approved by" value={sel.approvedBy} />
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Purchase Orders" onClose={onClose}>
+      <div className="po-toolbar">
+        <input
+          ref={searchRef}
+          className="po-input"
+          type="text"
+          placeholder="Search title, PO #, job…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") applyFilters(); }}
+        />
+        <input
+          ref={statusRef}
+          className="po-input po-status"
+          type="text"
+          placeholder="Status"
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") applyFilters(); }}
+        />
+        <button className="po-btn" onClick={applyFilters}>Go</button>
+      </div>
+
+      {items.length === 0 && !loading && (
+        <div className="m-muted">No purchase orders match.</div>
+      )}
+      {items.map((po, i) => (
+        <Row
+          key={`${(page - 1) * PAGE + i}`}
+          onClick={() => setSel(po)}
+          main={po.poNum ? "PO " + po.poNum : po.title || "PO"}
+          meta={[po.job, po.date ? fmtDate(po.date) : ""].filter(Boolean).join(" · ")}
+          right={
+            <>
+              {po.total ? <span className="l-amt">{money(po.total)}</span> : null}
+              {po.status ? <span className="pill">{po.status}</span> : null}
+            </>
+          }
+        />
+      ))}
+      {loading && <div className="m-muted">Loading…</div>}
+
+      {totalPages > 1 && !loading && (
+        <div className="po-pages">
+          <button className="po-pg-btn" disabled={page <= 1} onClick={() => goPage(page - 1)}>
+            &lsaquo;
+          </button>
+          {pageNumbers().map((p, i) =>
+            p === "..."
+              ? <span key={`e${i}`} className="po-pg-ellipsis">&hellip;</span>
+              : <button key={p} className={`po-pg-btn${p === page ? " po-pg-active" : ""}`} onClick={() => goPage(p)}>{p}</button>
+          )}
+          <button className="po-pg-btn" disabled={page >= totalPages} onClick={() => goPage(page + 1)}>
+            &rsaquo;
+          </button>
+        </div>
+      )}
     </Modal>
   );
 }

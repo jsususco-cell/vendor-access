@@ -32,11 +32,14 @@ export const DAILYLOG_FIELDS = {
   recordId: 3, job: 6, jobName: 7, vendor: 36, date: 109, actualDate: 183,
   title: 9, notes: 16, weather: 15, employees: 113, work: 114,
   starting: 115, continuing: 116, finishing: 117, corrections: 119, correctionNotes: 120,
+  permission: 10,    // Permissions (multitext — contains "Sub/Vendors" etc.)
+  dlAttachCount: 53, // # of Attachment records
 };
 
 // Attachments (buskqh28a)
 export const ATTACH_FIELDS = {
   recordId: 3, vendor: 8, job: 21, file: 10, fileName: 20, desc: 16, category: 52, url: 129, altUrl: 68, created: 1,
+  dailyLog: 17,  // Related Daily Log (numeric link)
 };
 
 // ---- buskqh272 : Vendors (holds accounts + unique invite tokens + access flags) ----
