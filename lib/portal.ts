@@ -91,10 +91,14 @@ export async function getSchedule(vendorId: number) {
   const jobIds = Array.from(new Set(jobs.map((j) => j.jobId).filter(Boolean))).slice(0, 120);
   if (!jobIds.length) return [];
   const where = jobIds.map((id) => `{${S.job}.EX.'${id}'}`).join("OR");
+  return querySchedule(where);
+}
+
+async function querySchedule(where: string) {
   const r = await queryRecords({
     from: TABLES.schedule,
     where,
-    select: [S.recordId, S.title, S.complete, S.percent, S.start, S.end, S.jobName],
+    select: [S.recordId, S.title, S.complete, S.percent, S.start, S.end, S.jobName, S.notes],
     sortBy: [{ fieldId: S.end, order: "ASC" }],
     options: { top: 300 },
   });
@@ -105,15 +109,20 @@ export async function getSchedule(vendorId: number) {
     end: fv(row, S.end),
     percent: Number(fv(row, S.percent) ?? 0),
     complete: Boolean(fv(row, S.complete)),
+    notes: String(fv(row, S.notes) ?? ""),
   }));
 }
 
 /** Purchase Orders for the vendor. */
 export async function getPurchaseOrders(vendorId: number) {
+  return queryPOs(`{${P.vendor}.EX.'${vendorId}'}`);
+}
+
+async function queryPOs(where: string) {
   const r = await queryRecords({
     from: TABLES.purchaseOrders,
-    where: `{${P.vendor}.EX.'${vendorId}'}`,
-    select: [P.recordId, P.title, P.poNum, P.status, P.total, P.date, P.jobName],
+    where,
+    select: [P.recordId, P.title, P.poNum, P.status, P.total, P.date, P.jobName, P.approvedBy],
     sortBy: [{ fieldId: P.date, order: "DESC" }],
     options: { top: 200 },
   });
@@ -124,15 +133,20 @@ export async function getPurchaseOrders(vendorId: number) {
     total: Number(fv(row, P.total) ?? 0),
     date: fv(row, P.date),
     job: String(fv(row, P.jobName) ?? ""),
+    approvedBy: String(fv(row, P.approvedBy) ?? ""),
   }));
 }
 
 /** Daily logs the vendor has submitted. */
 export async function getDailyLogs(vendorId: number) {
+  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}`);
+}
+
+async function queryDailyLogs(where: string) {
   const r = await queryRecords({
     from: TABLES.dailyLogs,
-    where: `{${DL.vendor}.EX.'${vendorId}'}`,
-    select: [DL.recordId, DL.title, DL.actualDate, DL.date, DL.jobName, DL.notes],
+    where,
+    select: [DL.recordId, DL.title, DL.actualDate, DL.date, DL.jobName, DL.notes, DL.work, DL.weather, DL.employees],
     sortBy: [{ fieldId: DL.actualDate, order: "DESC" }],
     options: { top: 200 },
   });
@@ -141,14 +155,21 @@ export async function getDailyLogs(vendorId: number) {
     date: fv(row, DL.actualDate) ?? fv(row, DL.date),
     job: String(fv(row, DL.jobName) ?? ""),
     notes: String(fv(row, DL.notes) ?? ""),
+    work: String(fv(row, DL.work) ?? ""),
+    weather: String(fv(row, DL.weather) ?? ""),
+    employees: fv(row, DL.employees),
   }));
 }
 
 /** Attachments (photos/documents) linked to the vendor. */
 export async function getAttachments(vendorId: number) {
+  return queryAttachments(`{${A.vendor}.EX.'${vendorId}'}`);
+}
+
+async function queryAttachments(where: string) {
   const r = await queryRecords({
     from: TABLES.attachments,
-    where: `{${A.vendor}.EX.'${vendorId}'}`,
+    where,
     select: [A.recordId, A.fileName, A.desc, A.category, A.url, A.altUrl, A.created],
     sortBy: [{ fieldId: A.created, order: "DESC" }],
     options: { top: 200 },
@@ -160,6 +181,18 @@ export async function getAttachments(vendorId: number) {
     url: String(fv(row, A.url) ?? fv(row, A.altUrl) ?? ""),
     created: fv(row, A.created),
   }));
+}
+
+/** Drill-down: everything tied to one job for this vendor. */
+export async function getJobDetail(vendorId: number, jobId: number) {
+  if (!jobId) return { schedule: [], pos: [], dailyLogs: [], attachments: [] };
+  const [schedule, pos, dailyLogs, attachments] = await Promise.all([
+    querySchedule(`{${S.job}.EX.'${jobId}'}`),
+    queryPOs(`{${P.job}.EX.'${jobId}'}AND{${P.vendor}.EX.'${vendorId}'}`),
+    queryDailyLogs(`{${DL.job}.EX.'${jobId}'}AND{${DL.vendor}.EX.'${vendorId}'}`),
+    queryAttachments(`{${A.job}.EX.'${jobId}'}AND{${A.vendor}.EX.'${vendorId}'}`),
+  ]);
+  return { schedule, pos, dailyLogs, attachments };
 }
 
 export interface DailyLogInput {

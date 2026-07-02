@@ -19,12 +19,12 @@ export const TABLES = {
 
 // Schedule Items (buskqh27f)
 export const SCHEDULE_FIELDS = {
-  recordId: 3, title: 8, complete: 9, percent: 10, start: 12, end: 13, job: 20, jobName: 21,
+  recordId: 3, title: 8, complete: 9, percent: 10, start: 12, end: 13, job: 20, jobName: 21, notes: 30,
 };
 
 // Purchase Orders (bukmrrvkz)
 export const PO_FIELDS = {
-  recordId: 3, title: 6, poNum: 17, status: 15, job: 13, jobName: 14, vendor: 21, total: 88, date: 77,
+  recordId: 3, title: 6, poNum: 17, status: 15, job: 13, jobName: 14, vendor: 21, total: 88, date: 77, approvedBy: 78,
 };
 
 // Daily Logs (buskqh3gc) — vendor-fillable subset

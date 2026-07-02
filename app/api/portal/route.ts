@@ -5,6 +5,7 @@ import {
   getPurchaseOrders,
   getDailyLogs,
   getAttachments,
+  getJobDetail,
   createDailyLog,
   uploadAttachment,
 } from "@/lib/portal";
@@ -40,6 +41,10 @@ export async function POST(req: Request) {
       case "attachments":
         if (!p.photos && !p.docs) return NextResponse.json({ error: "no access" }, { status: 403 });
         return NextResponse.json({ items: await getAttachments(id) });
+
+      case "job-detail":
+        if (!p.jobs) return NextResponse.json({ error: "no access" }, { status: 403 });
+        return NextResponse.json(await getJobDetail(id, Number(body.jobId)));
 
       case "create-daily-log": {
         const recordId = await createDailyLog(id, body.log ?? {});

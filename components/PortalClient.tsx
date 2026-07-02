@@ -32,6 +32,9 @@ function fmtDate(v: unknown): string {
 function money(n: number): string {
   return "$" + Math.round(n || 0).toLocaleString();
 }
+function pct(n: number): string {
+  return Math.round((n <= 1 ? n * 100 : n) || 0) + "%";
+}
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -70,7 +73,6 @@ export default function PortalClient({
 
   return (
     <main className="content">
-      {/* ===== Section 1: Vendor Information ===== */}
       <div className="section-label">Vendor Information</div>
       <div className="card full info">
         <div className="info-row"><span>Vendor</span><b>{vendor.company || vendor.name || "—"}</b></div>
@@ -82,7 +84,6 @@ export default function PortalClient({
         <div className="info-row"><span>Phone</span><b>{vendor.phone || "—"}</b></div>
       </div>
 
-      {/* ===== Section 2: Reporting ===== */}
       <div className="section-label">Reporting</div>
       <div className="grid">
         <Tile icon="📝" title="Daily Logs" sub="Submit a daily site log" onClick={() => setModal("daily")} />
@@ -94,7 +95,6 @@ export default function PortalClient({
         )}
       </div>
 
-      {/* ===== Section 3: Assignments ===== */}
       {p.jobs && (
         <>
           <div className="section-label">Assignments</div>
@@ -107,20 +107,14 @@ export default function PortalClient({
 
       <div className="footnote">Byrdson Services · Private vendor access</div>
 
-      {modal === "daily" && (
-        <DailyLogModal jobs={jobs} api={api} onClose={() => setModal(null)} />
-      )}
-      {modal === "photos" && (
-        <PhotosModal jobs={jobs} api={api} onClose={() => setModal(null)} />
-      )}
+      {modal === "daily" && <DailyLogModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
+      {modal === "photos" && <PhotosModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
       {modal === "schedule" && (
-        <ListModal title="Schedule" api={api} action="schedule" onClose={() => setModal(null)} render={renderSchedule} empty="No schedule items yet." />
+        <ListModal title="Schedule" api={api} action="schedule" onClose={() => setModal(null)} empty="No schedule items yet." row={rowSchedule} detail={detailSchedule} />
       )}
-      {modal === "jobs" && (
-        <JobsModal jobs={jobs} onClose={() => setModal(null)} />
-      )}
+      {modal === "jobs" && <JobsModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
       {modal === "pos" && (
-        <ListModal title="Purchase Orders" api={api} action="purchase-orders" onClose={() => setModal(null)} render={renderPOs} empty="No purchase orders yet." />
+        <ListModal title="Purchase Orders" api={api} action="purchase-orders" onClose={() => setModal(null)} empty="No purchase orders yet." row={rowPO} detail={detailPO} />
       )}
     </main>
   );
@@ -136,11 +130,12 @@ function Tile({ icon, title, sub, onClick }: { icon: string; title: string; sub:
   );
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Modal({ title, onClose, onBack, children }: { title: string; onClose: () => void; onBack?: () => void; children: React.ReactNode }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
+          {onBack && <button className="modal-back" onClick={onBack} aria-label="Back">←</button>}
           <h2>{title}</h2>
           <button className="modal-x" onClick={onClose} aria-label="Close">×</button>
         </div>
@@ -150,66 +145,135 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-/* ---------- Generic list modal (schedule, POs) ---------- */
+function KV({ label, value }: { label: string; value: unknown }) {
+  if (value === undefined || value === null || value === "") return null;
+  return <div className="kv"><span>{label}</span><b>{String(value)}</b></div>;
+}
+
+function Row({ onClick, main, meta, right }: { onClick?: () => void; main: string; meta?: string; right?: React.ReactNode }) {
+  return (
+    <div className={"lrow" + (onClick ? " click" : "")} onClick={onClick}>
+      <div><div className="l-name">{main}</div>{meta ? <div className="l-meta">{meta}</div> : null}</div>
+      <div className="l-right">{right}{onClick ? <span className="chev">›</span> : null}</div>
+    </div>
+  );
+}
+
+/* ---------- Generic list modal with per-item drill-down ---------- */
 function ListModal({
-  title, api, action, render, empty, onClose,
+  title, api, action, onClose, empty, row, detail,
 }: {
   title: string;
   api: (a: string, e?: Record<string, unknown>) => Promise<any>;
   action: string;
-  render: (items: any[]) => React.ReactNode;
-  empty: string;
   onClose: () => void;
+  empty: string;
+  row: (item: any, i: number, onClick: () => void) => React.ReactNode;
+  detail: (item: any) => React.ReactNode;
 }) {
   const [items, setItems] = useState<any[] | null>(null);
   const [err, setErr] = useState("");
+  const [sel, setSel] = useState<number | null>(null);
   useEffect(() => {
     api(action).then((d) => setItems(d.items || [])).catch((e) => setErr(String(e.message || e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (sel !== null && items) {
+    return <Modal title={title} onClose={onClose} onBack={() => setSel(null)}>{detail(items[sel])}</Modal>;
+  }
   return (
     <Modal title={title} onClose={onClose}>
-      {err ? <div className="m-err">{err}</div> : items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">{empty}</div> : render(items)}
+      {err ? <div className="m-err">{err}</div> : items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">{empty}</div> : items.map((it, i) => row(it, i, () => setSel(i)))}
     </Modal>
   );
 }
 
-function renderSchedule(items: any[]) {
-  return items.map((s, i) => (
-    <div className="lrow" key={i}>
-      <div><div className="l-name">{s.title}</div><div className="l-meta">{[s.job, s.start ? "Start " + fmtDate(s.start) : "", s.end ? "Due " + fmtDate(s.end) : ""].filter(Boolean).join(" · ")}</div></div>
-      <span className="pill">{s.complete ? "Done" : Math.round((s.percent <= 1 ? s.percent * 100 : s.percent)) + "%"}</span>
+const rowSchedule = (s: any, i: number, onClick: () => void) => (
+  <Row key={i} onClick={onClick} main={s.title} meta={[s.job, s.start ? "Start " + fmtDate(s.start) : "", s.end ? "Due " + fmtDate(s.end) : ""].filter(Boolean).join(" · ")} right={<span className="pill">{s.complete ? "Done" : pct(s.percent)}</span>} />
+);
+const detailSchedule = (s: any) => (
+  <div className="detail">
+    <KV label="Task" value={s.title} />
+    <KV label="Job" value={s.job} />
+    <KV label="Start" value={s.start ? fmtDate(s.start) : ""} />
+    <KV label="Due" value={s.end ? fmtDate(s.end) : ""} />
+    <KV label="Progress" value={s.complete ? "Complete" : pct(s.percent)} />
+    <KV label="Notes" value={s.notes} />
+  </div>
+);
+
+const rowPO = (po: any, i: number, onClick: () => void) => (
+  <Row key={i} onClick={onClick} main={po.poNum ? "PO " + po.poNum : po.title || "PO"} meta={[po.job, po.date ? fmtDate(po.date) : ""].filter(Boolean).join(" · ")} right={<>{po.total ? <span className="l-amt">{money(po.total)}</span> : null}{po.status ? <span className="pill">{po.status}</span> : null}</>} />
+);
+const detailPO = (po: any) => (
+  <div className="detail">
+    <KV label="PO #" value={po.poNum} />
+    <KV label="Title" value={po.title} />
+    <KV label="Job" value={po.job} />
+    <KV label="Status" value={po.status} />
+    <KV label="Total" value={po.total ? money(po.total) : ""} />
+    <KV label="Date" value={po.date ? fmtDate(po.date) : ""} />
+    <KV label="Approved by" value={po.approvedBy} />
+  </div>
+);
+
+/* ---------- Job drill-down: mini-report ---------- */
+function SubList({ title, items, render, links }: { title: string; items: any[]; render: (it: any) => string; links?: boolean }) {
+  return (
+    <div className="sub">
+      <div className="sub-h">{title}<span className="sub-cnt">{items.length}</span></div>
+      {items.length === 0 ? <div className="m-muted sm">None</div> : items.map((it, i) =>
+        links && it.url
+          ? <a key={i} className="sub-row link" href={it.url} target="_blank" rel="noopener">{render(it)}</a>
+          : <div key={i} className="sub-row">{render(it)}</div>
+      )}
     </div>
-  ));
-}
-function renderPOs(items: any[]) {
-  return items.map((po, i) => (
-    <div className="lrow" key={i}>
-      <div><div className="l-name">{po.poNum ? "PO " + po.poNum : po.title || "PO"}</div><div className="l-meta">{[po.job, po.date ? fmtDate(po.date) : ""].filter(Boolean).join(" · ")}</div></div>
-      <div style={{ textAlign: "right" }}>
-        {po.total ? <div className="l-name">{money(po.total)}</div> : null}
-        {po.status ? <span className="pill">{po.status}</span> : null}
-      </div>
-    </div>
-  ));
+  );
 }
 
-/* ---------- Assigned jobs (already loaded on the server) ---------- */
-function JobsModal({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
+function JobsModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () => void }) {
+  const [sel, setSel] = useState<Job | null>(null);
+  const [data, setData] = useState<any | null>(null);
+  const [err, setErr] = useState("");
+
+  function open(job: Job) {
+    setSel(job); setData(null); setErr("");
+    api("job-detail", { jobId: job.jobId }).then(setData).catch((e: any) => setErr(String(e.message || e)));
+  }
+
+  if (sel) {
+    return (
+      <Modal title={sel.name} onClose={onClose} onBack={() => setSel(null)}>
+        <div className="detail">
+          <KV label="Address" value={String(sel.address || "")} />
+          <KV label="Due" value={sel.due ? fmtDate(sel.due) : ""} />
+        </div>
+        {err ? <div className="m-err">{err}</div> : !data ? <div className="m-muted">Loading…</div> : (
+          <>
+            <SubList title="Schedule" items={data.schedule} render={(s) => `${s.title}${s.end ? " — " + fmtDate(s.end) : ""}`} />
+            <SubList title="Purchase Orders" items={data.pos} render={(po) => `${po.poNum ? "PO " + po.poNum : po.title}${po.total ? " — " + money(po.total) : ""}${po.status ? " · " + po.status : ""}`} />
+            <SubList title="Daily Logs" items={data.dailyLogs} render={(l) => `${l.title}${l.date ? " — " + fmtDate(l.date) : ""}`} />
+            <SubList title="Files" items={data.attachments} render={(a) => a.fileName || "File"} links />
+          </>
+        )}
+      </Modal>
+    );
+  }
+
   return (
     <Modal title="Assigned Jobs" onClose={onClose}>
       {jobs.length === 0 ? <div className="m-muted">No jobs are currently assigned to you.</div> : jobs.map((j, i) => (
-        <div className="lrow" key={i}>
-          <div><div className="l-name">{j.name}</div><div className="l-meta">{[String(j.address || ""), j.due ? "Due " + fmtDate(j.due) : ""].filter(Boolean).join(" · ")}</div></div>
-        </div>
+        <Row key={i} onClick={() => open(j)} main={j.name} meta={[String(j.address || ""), j.due ? "Due " + fmtDate(j.due) : ""].filter(Boolean).join(" · ")} />
       ))}
     </Modal>
   );
 }
 
-/* ---------- Daily Log create + list ---------- */
+/* ---------- Daily Log create + list + per-log detail ---------- */
 function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () => void }) {
   const [logs, setLogs] = useState<any[] | null>(null);
+  const [sel, setSel] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -220,6 +284,23 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
     api("daily-logs").then((d: any) => setLogs(d.items || [])).catch(() => setLogs([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (sel !== null && logs) {
+    const l = logs[sel];
+    return (
+      <Modal title="Daily Log" onClose={onClose} onBack={() => setSel(null)}>
+        <div className="detail">
+          <KV label="Title" value={l.title} />
+          <KV label="Job" value={l.job} />
+          <KV label="Date" value={l.date ? fmtDate(l.date) : ""} />
+          <KV label="# on site" value={l.employees} />
+          <KV label="Work done" value={l.work} />
+          <KV label="Weather" value={l.weather} />
+          <KV label="Notes" value={l.notes} />
+        </div>
+      </Modal>
+    );
+  }
 
   async function submit() {
     setErr(""); setMsg("");
@@ -282,9 +363,7 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
 
       <div className="m-sec">Submitted logs</div>
       {logs === null ? <div className="m-muted">Loading…</div> : logs.length === 0 ? <div className="m-muted">None yet.</div> : logs.map((l, i) => (
-        <div className="lrow" key={i}>
-          <div><div className="l-name">{l.title}</div><div className="l-meta">{[l.job, l.date ? fmtDate(l.date) : ""].filter(Boolean).join(" · ")}</div></div>
-        </div>
+        <Row key={i} onClick={() => setSel(i)} main={l.title} meta={[l.job, l.date ? fmtDate(l.date) : ""].filter(Boolean).join(" · ")} />
       ))}
     </Modal>
   );
@@ -347,10 +426,7 @@ function PhotosModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: (
 
       <div className="m-sec">Files</div>
       {items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">No files yet.</div> : items.map((a, i) => (
-        <div className="lrow" key={i}>
-          <div><div className="l-name">{a.fileName || "File"}</div><div className="l-meta">{[a.category, a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")}</div></div>
-          {a.url ? <a className="pill link-pill" href={a.url} target="_blank" rel="noopener">View</a> : null}
-        </div>
+        <Row key={i} onClick={a.url ? () => window.open(a.url, "_blank", "noopener") : undefined} main={a.fileName || "File"} meta={[a.category, a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")} right={a.url ? <span className="pill">View</span> : null} />
       ))}
     </Modal>
   );
