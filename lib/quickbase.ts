@@ -25,7 +25,7 @@ export async function queryRecords(params: {
   select?: number[];
   where?: string;
   sortBy?: { fieldId: number; order: "ASC" | "DESC" }[];
-  options?: { top?: number };
+  options?: { top?: number; skip?: number };
 }): Promise<QueryResult> {
   const res = await fetch(`${API}/records/query`, {
     method: "POST",

@@ -113,33 +113,50 @@ async function querySchedule(where: string) {
   }));
 }
 
-/** Purchase Orders for the vendor. */
-export async function getPurchaseOrders(vendorId: number) {
-  return queryPOs(`{${P.vendor}.EX.'${vendorId}'}`);
+export interface POQuery {
+  vendorId: number;
+  skip?: number;
+  top?: number;
+  status?: string;
+  search?: string;
 }
 
-async function queryPOs(where: string) {
+/** Purchase Orders for the vendor with optional pagination, status filter, and text search. */
+export async function getPurchaseOrders(opts: POQuery): Promise<{ items: any[]; total: number }> {
+  let where = `{${P.vendor}.EX.'${opts.vendorId}'}`;
+  if (opts.status) where += `AND{${P.status}.EX.'${qbSafe(opts.status)}'}`;
+  if (opts.search) {
+    const s = qbSafe(opts.search);
+    where += `AND({${P.title}.CT.'${s}'}OR{${P.poNum}.CT.'${s}'}OR{${P.jobName}.CT.'${s}'})`;
+  }
+  return queryPOs(where, { skip: opts.skip, top: opts.top });
+}
+
+async function queryPOs(where: string, pag?: { skip?: number; top?: number }): Promise<{ items: any[]; total: number }> {
   const r = await queryRecords({
     from: TABLES.purchaseOrders,
     where,
     select: [P.recordId, P.title, P.poNum, P.status, P.total, P.date, P.jobName, P.approvedBy],
     sortBy: [{ fieldId: P.date, order: "DESC" }],
-    options: { top: 200 },
+    options: { skip: pag?.skip ?? 0, top: pag?.top ?? 200 },
   });
-  return (r.data ?? []).map((row) => ({
-    title: String(fv(row, P.title) ?? ""),
-    poNum: String(fv(row, P.poNum) ?? ""),
-    status: String(fv(row, P.status) ?? ""),
-    total: Number(fv(row, P.total) ?? 0),
-    date: fv(row, P.date),
-    job: String(fv(row, P.jobName) ?? ""),
-    approvedBy: String(fv(row, P.approvedBy) ?? ""),
-  }));
+  return {
+    items: (r.data ?? []).map((row) => ({
+      title: String(fv(row, P.title) ?? ""),
+      poNum: String(fv(row, P.poNum) ?? ""),
+      status: String(fv(row, P.status) ?? ""),
+      total: Number(fv(row, P.total) ?? 0),
+      date: fv(row, P.date),
+      job: String(fv(row, P.jobName) ?? ""),
+      approvedBy: String(fv(row, P.approvedBy) ?? ""),
+    })),
+    total: r.metadata?.totalRecords ?? 0,
+  };
 }
 
-/** Daily logs the vendor has submitted. */
+/** Daily logs the vendor has submitted, visible only when Permissions includes "Sub/Vendors". */
 export async function getDailyLogs(vendorId: number) {
-  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}`);
+  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Sub/Vendors'}`);
 }
 
 async function queryDailyLogs(where: string) {
@@ -161,9 +178,22 @@ async function queryDailyLogs(where: string) {
   }));
 }
 
-/** Attachments (photos/documents) linked to the vendor. */
+/** Attachments (photos/documents) linked to daily logs with "Sub/Vendors" permission. */
 export async function getAttachments(vendorId: number) {
-  return queryAttachments(`{${A.vendor}.EX.'${vendorId}'}`);
+  // Step 1: find daily logs with Sub/Vendors permission and attachments
+  const dlWhere = `{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Sub/Vendors'}AND{${DL.dlAttachCount}.GT.0}`;
+  const dlRes = await queryRecords({
+    from: TABLES.dailyLogs,
+    where: dlWhere,
+    select: [DL.recordId],
+    options: { top: 500 },
+  });
+  const dlIds = (dlRes.data ?? []).map((r) => Number(fv(r, DL.recordId))).filter(Boolean);
+  if (!dlIds.length) return [];
+
+  // Step 2: fetch attachments linked to those daily logs
+  const orClauses = dlIds.map((id) => `{${A.dailyLog}.EX.'${id}'}`);
+  return queryAttachments(`(${orClauses.join("OR")})`);
 }
 
 async function queryAttachments(where: string) {
@@ -175,6 +205,7 @@ async function queryAttachments(where: string) {
     options: { top: 200 },
   });
   return (r.data ?? []).map((row) => ({
+    recordId: Number(fv(row, A.recordId) ?? 0),
     fileName: String(fv(row, A.fileName) ?? ""),
     desc: String(fv(row, A.desc) ?? ""),
     category: String(fv(row, A.category) ?? ""),
@@ -186,13 +217,13 @@ async function queryAttachments(where: string) {
 /** Drill-down: everything tied to one job for this vendor. */
 export async function getJobDetail(vendorId: number, jobId: number) {
   if (!jobId) return { schedule: [], pos: [], dailyLogs: [], attachments: [] };
-  const [schedule, pos, dailyLogs, attachments] = await Promise.all([
+  const [schedule, poResult, dailyLogs, attachments] = await Promise.all([
     querySchedule(`{${S.job}.EX.'${jobId}'}`),
     queryPOs(`{${P.job}.EX.'${jobId}'}AND{${P.vendor}.EX.'${vendorId}'}`),
     queryDailyLogs(`{${DL.job}.EX.'${jobId}'}AND{${DL.vendor}.EX.'${vendorId}'}`),
     queryAttachments(`{${A.job}.EX.'${jobId}'}AND{${A.vendor}.EX.'${vendorId}'}`),
   ]);
-  return { schedule, pos, dailyLogs, attachments };
+  return { schedule, pos: poResult.items, dailyLogs, attachments };
 }
 
 export interface DailyLogInput {
