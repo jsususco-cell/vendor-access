@@ -57,6 +57,24 @@ export async function updateField(
   }
 }
 
+/** Create one record. `data` maps fid -> { value }. Returns the new Record ID#. */
+export async function createRecord(
+  tableId: string,
+  data: Record<number, { value: unknown }>
+): Promise<number> {
+  const res = await fetch(`${API}/records`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ to: tableId, data: [data], fieldsToReturn: [3] }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Quickbase create failed (${res.status}): ${await res.text()}`);
+  }
+  const json = await res.json();
+  return json?.metadata?.createdRecordIds?.[0] ?? 0;
+}
+
 /** List a table's fields (used by the introspection script). */
 export async function getFields(
   tableId: string
