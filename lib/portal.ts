@@ -175,6 +175,7 @@ async function queryAttachments(where: string) {
     options: { top: 200 },
   });
   return (r.data ?? []).map((row) => ({
+    recordId: Number(fv(row, A.recordId) ?? 0),
     fileName: String(fv(row, A.fileName) ?? ""),
     desc: String(fv(row, A.desc) ?? ""),
     category: String(fv(row, A.category) ?? ""),

@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
+
+const FileViewer = dynamic(() => import("./FileViewer"), { ssr: false });
 
 interface Vendor {
   recordId: number;
@@ -57,6 +60,18 @@ export default function PortalClient({
   jobs: Job[];
 }) {
   const [modal, setModal] = useState<Modal>(null);
+  const [viewFile, setViewFile] = useState<{ fileName: string; proxyUrl: string; rawUrl: string } | null>(null);
+
+  const makeProxyUrl = useCallback(
+    (rawUrl: string, fileName: string) =>
+      `/api/portal/file?token=${encodeURIComponent(token)}&url=${encodeURIComponent(rawUrl)}&fileName=${encodeURIComponent(fileName)}`,
+    [token],
+  );
+
+  function openFileViewer(recordId: number, fileName: string, rawUrl: string) {
+    const proxyUrl = makeProxyUrl(rawUrl, fileName);
+    setViewFile({ fileName, proxyUrl, rawUrl });
+  }
 
   async function api(action: string, extra: Record<string, unknown> = {}) {
     const res = await fetch("/api/portal", {
@@ -108,13 +123,22 @@ export default function PortalClient({
       <div className="footnote">Byrdson Services · Private vendor access</div>
 
       {modal === "daily" && <DailyLogModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
-      {modal === "photos" && <PhotosModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
+      {modal === "photos" && <PhotosModal jobs={jobs} api={api} onViewFile={openFileViewer} onClose={() => setModal(null)} />}
       {modal === "schedule" && (
         <ListModal title="Schedule" api={api} action="schedule" onClose={() => setModal(null)} empty="No schedule items yet." row={rowSchedule} detail={detailSchedule} />
       )}
-      {modal === "jobs" && <JobsModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
+      {modal === "jobs" && <JobsModal jobs={jobs} api={api} onViewFile={openFileViewer} onClose={() => setModal(null)} />}
       {modal === "pos" && (
         <ListModal title="Purchase Orders" api={api} action="purchase-orders" onClose={() => setModal(null)} empty="No purchase orders yet." row={rowPO} detail={detailPO} />
+      )}
+
+      {viewFile && (
+        <FileViewer
+          fileName={viewFile.fileName}
+          proxyUrl={viewFile.proxyUrl}
+          rawUrl={viewFile.rawUrl}
+          onClose={() => setViewFile(null)}
+        />
       )}
     </main>
   );
@@ -219,12 +243,14 @@ const detailPO = (po: any) => (
 );
 
 /* ---------- Job drill-down: mini-report ---------- */
-function SubList({ title, items, render, links }: { title: string; items: any[]; render: (it: any) => string; links?: boolean }) {
+function SubList({ title, items, render, links, onLinkClick }: { title: string; items: any[]; render: (it: any) => string; links?: boolean; onLinkClick?: (it: any) => void }) {
   return (
     <div className="sub">
       <div className="sub-h">{title}<span className="sub-cnt">{items.length}</span></div>
       {items.length === 0 ? <div className="m-muted sm">None</div> : items.map((it, i) =>
-        links && it.url
+        links && onLinkClick && it.recordId
+          ? <button key={i} className="sub-row link link-btn" onClick={() => onLinkClick(it)}>{render(it)}</button>
+          : links && it.url
           ? <a key={i} className="sub-row link" href={it.url} target="_blank" rel="noopener">{render(it)}</a>
           : <div key={i} className="sub-row">{render(it)}</div>
       )}
@@ -232,7 +258,7 @@ function SubList({ title, items, render, links }: { title: string; items: any[];
   );
 }
 
-function JobsModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () => void }) {
+function JobsModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; onViewFile: (recordId: number, fileName: string, rawUrl: string) => void; onClose: () => void }) {
   const [sel, setSel] = useState<Job | null>(null);
   const [data, setData] = useState<any | null>(null);
   const [err, setErr] = useState("");
@@ -254,7 +280,7 @@ function JobsModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () 
             <SubList title="Schedule" items={data.schedule} render={(s) => `${s.title}${s.end ? " — " + fmtDate(s.end) : ""}`} />
             <SubList title="Purchase Orders" items={data.pos} render={(po) => `${po.poNum ? "PO " + po.poNum : po.title}${po.total ? " — " + money(po.total) : ""}${po.status ? " · " + po.status : ""}`} />
             <SubList title="Daily Logs" items={data.dailyLogs} render={(l) => `${l.title}${l.date ? " — " + fmtDate(l.date) : ""}`} />
-            <SubList title="Files" items={data.attachments} render={(a) => a.fileName || "File"} links />
+            <SubList title="Files" items={data.attachments} render={(a) => a.fileName || "File"} links onLinkClick={(a) => a.recordId && onViewFile(a.recordId, a.fileName || "File", a.url || "")} />
           </>
         )}
       </Modal>
@@ -370,7 +396,7 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
 }
 
 /* ---------- Photos / Documents upload + list ---------- */
-function PhotosModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () => void }) {
+function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; onViewFile: (recordId: number, fileName: string, rawUrl: string) => void; onClose: () => void }) {
   const [items, setItems] = useState<any[] | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState("");
@@ -426,7 +452,13 @@ function PhotosModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: (
 
       <div className="m-sec">Files</div>
       {items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">No files yet.</div> : items.map((a, i) => (
-        <Row key={i} onClick={a.url ? () => window.open(a.url, "_blank", "noopener") : undefined} main={a.fileName || "File"} meta={[a.category, a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")} right={a.url ? <span className="pill">View</span> : null} />
+        <Row
+          key={i}
+          onClick={a.recordId ? () => onViewFile(a.recordId, a.fileName || "File", a.url || "") : undefined}
+          main={a.fileName || "File"}
+          meta={[a.category, a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")}
+          right={a.recordId ? <span className="pill">View</span> : null}
+        />
       ))}
     </Modal>
   );
