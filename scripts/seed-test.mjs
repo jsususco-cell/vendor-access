@@ -233,12 +233,13 @@ console.log(`  Created PO ID: ${po2} — "[TEST] Electrical Rough-In"`);
 const poIds = [po1, po2];
 
 // ── Step 5: Create daily logs ─────────────────────────────────────────────────
-// Do NOT set fid 10 (Permission) — portal.ts createDailyLog() never sets it either.
-// QB has an automation that sets it automatically to a value matching {10.CT.'Sub/Vendors'}.
-// Explicitly setting "Subs/Vendors" overrides the automation with the wrong substring.
+// fid 10 (Permission) must be set to "Subs/Vendors" to match the portal filter
+// {10.CT.'Subs/Vendors'} in getDailyLogs(). QB automation sets "Internal Users"
+// by default, so we must set it explicitly here.
 console.log("\nCreating daily logs...");
 const log1 = await createRecord(DAILY_LOGS, {
   "36":  { value: vendorId },                             // Related Vendor
+  "10":  { value: ["Subs/Vendors"] },                    // Permission — must match portal filter
   "109": { value: "2026-07-01" },                        // Date
   "9":   { value: "[TEST] Foundation Inspection Day" },  // Title
   "15":  { value: "Sunny, 82°F" },                       // Weather
@@ -251,12 +252,11 @@ const log1 = await createRecord(DAILY_LOGS, {
   "119": { value: false },                               // Corrections Needed
   ...(job1 ? { "6": { value: job1 } } : {}),
 });
-// Read back fid 10 to confirm QB automation set the correct permission value
-const log1Check = await qQuery(DAILY_LOGS, [10], `{3.EX.'${log1}'}`);
-console.log(`  Created daily log ID: ${log1} — "[TEST] Foundation Inspection Day" (permission: ${JSON.stringify(log1Check.data[0]?.["10"]?.value)})`);
+console.log(`  Created daily log ID: ${log1} — "[TEST] Foundation Inspection Day"`);
 
 const log2 = await createRecord(DAILY_LOGS, {
   "36":  { value: vendorId },                         // Related Vendor
+  "10":  { value: ["Subs/Vendors"] },                 // Permission — must match portal filter
   "109": { value: "2026-07-02" },                     // Date
   "9":   { value: "[TEST] Framing Progress" },        // Title
   "15":  { value: "Partly Cloudy, 78°F" },            // Weather
