@@ -154,9 +154,9 @@ async function queryPOs(where: string, pag?: { skip?: number; top?: number }): P
   };
 }
 
-/** Daily logs the vendor has submitted, visible only when Permissions includes "Sub/Vendors". */
+/** Daily logs linked to this vendor. */
 export async function getDailyLogs(vendorId: number) {
-  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Sub/Vendors'}`);
+  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}`);
 }
 
 async function queryDailyLogs(where: string) {
@@ -178,10 +178,10 @@ async function queryDailyLogs(where: string) {
   }));
 }
 
-/** Attachments (photos/documents) linked to daily logs with "Sub/Vendors" permission. */
+/** Attachments (photos/documents) linked to this vendor's daily logs. */
 export async function getAttachments(vendorId: number) {
-  // Step 1: find daily logs with Sub/Vendors permission and attachments
-  const dlWhere = `{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Sub/Vendors'}AND{${DL.dlAttachCount}.GT.0}`;
+  // Step 1: find daily logs belonging to this vendor that have attachments
+  const dlWhere = `{${DL.vendor}.EX.'${vendorId}'}AND{${DL.dlAttachCount}.GT.0}`;
   const dlRes = await queryRecords({
     from: TABLES.dailyLogs,
     where: dlWhere,

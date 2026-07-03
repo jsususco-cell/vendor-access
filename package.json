@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "introspect": "node --env-file=.env.local scripts/introspect.mjs"
+    "introspect": "node --env-file=.env.local scripts/introspect.mjs",
+    "seed-test": "node --env-file=.env.local scripts/seed-test.mjs",
+    "seed-test:cleanup": "node --env-file=.env.local scripts/seed-test.mjs --cleanup"
   },
   "dependencies": {
     "next": "14.2.5",
