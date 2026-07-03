@@ -240,7 +240,10 @@ export interface DailyLogInput {
 }
 
 export async function createDailyLog(vendorId: number, input: DailyLogInput): Promise<number> {
-  const data: Record<number, { value: unknown }> = { [DL.vendor]: { value: vendorId } };
+  const data: Record<number, { value: unknown }> = {
+    [DL.vendor]: { value: vendorId },
+    [DL.permission]: { value: ["Subs/Vendors"] }, // override QB default of "Internal Users"
+  };
   if (input.jobId) data[DL.job] = { value: input.jobId };
   if (input.date) data[DL.date] = { value: input.date };
   if (input.title) data[DL.title] = { value: input.title };
