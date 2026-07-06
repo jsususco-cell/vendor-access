@@ -65,8 +65,11 @@ export async function POST(req: Request) {
         if (!f.fileName || !f.base64) {
           return NextResponse.json({ error: "file required" }, { status: 400 });
         }
+        if (!body.jobId) {
+          return NextResponse.json({ error: "job required" }, { status: 400 });
+        }
         const recordId = await uploadAttachment(id, {
-          jobId: body.jobId ? Number(body.jobId) : undefined,
+          jobId: Number(body.jobId),
           fileName: String(f.fileName),
           base64: String(f.base64),
           description: body.description ? String(body.description) : undefined,

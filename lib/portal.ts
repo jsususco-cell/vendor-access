@@ -261,14 +261,24 @@ export async function createDailyLog(vendorId: number, input: DailyLogInput): Pr
 
 export async function uploadAttachment(
   vendorId: number,
-  input: { jobId?: number; fileName: string; base64: string; description?: string }
+  input: { jobId: number; fileName: string; base64: string; description?: string }
 ): Promise<number> {
+  // Every attachment must be linked to a daily log so it appears in the main files section.
+  // Create a minimal daily log for this upload.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dailyLogId = await createDailyLog(vendorId, {
+    jobId: input.jobId,
+    date: todayStr,
+    title: `Attachment: ${input.fileName}`,
+  });
+
   const data: Record<number, { value: unknown }> = {
     [A.vendor]: { value: vendorId },
     [A.file]: { value: { fileName: input.fileName, data: input.base64 } },
     [A.fileName]: { value: input.fileName },
+    [A.job]: { value: input.jobId },
+    [A.dailyLog]: { value: dailyLogId },
   };
-  if (input.jobId) data[A.job] = { value: input.jobId };
   if (input.description) data[A.desc] = { value: input.description };
   return createRecord(TABLES.attachments, data);
 }

@@ -557,13 +557,14 @@ function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any
 
   async function upload() {
     setErr(""); setMsg("");
+    if (!jobId) return setErr("Select a job first.");
     if (!file) return setErr("Choose a file first.");
     setBusy(true);
     try {
       const base64 = await fileToBase64(file);
       await api("upload-attachment", {
         file: { fileName: file.name, base64 },
-        jobId: jobId ? Number(jobId) : undefined,
+        jobId: Number(jobId),
         description: desc || undefined,
       });
       setMsg("Uploaded.");
@@ -578,22 +579,28 @@ function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any
 
   return (
     <Modal title="Photos / Documents" onClose={onClose}>
-      <div className="m-sec">Upload a file</div>
-      <div className="m-grid">
-        <label>Job
-          <select value={jobId} onChange={(e) => setJobId(e.target.value)}>
-            <option value="">— select —</option>
-            {jobs.map((j) => <option key={j.id} value={j.jobId}>{j.name}</option>)}
-          </select>
-        </label>
-        <label>Description<input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
-      </div>
-      <label className="m-full">File<input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
-      <div className="m-actions">
-        <button className="btn-primary" onClick={upload} disabled={busy}>{busy ? "Uploading…" : "Upload"}</button>
-        {msg && <span className="m-ok">{msg}</span>}
-        {err && <span className="m-err">{err}</span>}
-      </div>
+      {jobs.length === 0 ? (
+        <div className="m-muted">You have no assigned jobs. Files must be attached to a job — contact your project manager.</div>
+      ) : (
+        <>
+          <div className="m-sec">Upload a file</div>
+          <div className="m-grid">
+            <label>Job <span className="required">*</span>
+              <select value={jobId} onChange={(e) => setJobId(e.target.value)}>
+                <option value="">— select —</option>
+                {jobs.map((j) => <option key={j.id} value={j.jobId}>{j.name}</option>)}
+              </select>
+            </label>
+            <label>Description<input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+          </div>
+          <label className="m-full">File<input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
+          <div className="m-actions">
+            <button className="btn-primary" onClick={upload} disabled={busy || !jobId}>{busy ? "Uploading…" : "Upload"}</button>
+            {msg && <span className="m-ok">{msg}</span>}
+            {err && <span className="m-err">{err}</span>}
+          </div>
+        </>
+      )}
 
       <div className="m-sec">Files</div>
       {items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">No files yet.</div> : items.map((a, i) => (
