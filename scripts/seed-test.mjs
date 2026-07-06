@@ -273,18 +273,23 @@ console.log(`  Created daily log ID: ${log2} — "[TEST] Framing Progress"`);
 const logIds = [log1, log2];
 
 // ── Step 6: Create attachment record ─────────────────────────────────────────
-// URL-only record — no base64 needed to appear in the photos/docs tab.
-console.log("\nCreating attachment record...");
-const attachmentId = await createRecord(ATTACHMENTS, {
-  "8":  { value: vendorId },                                        // Related Vendor
-  "17": { value: log1 },                                           // Related Daily Log
-  "20": { value: "test-placeholder.txt" },                         // File Name
-  "16": { value: "[TEST] Placeholder attachment for seed script" }, // Description
-  // fid 52 (Category) omitted — restricted dropdown, unknown valid choices
-  // fid 129 (URL) omitted — formula field, cannot be written
-  ...(job1 ? { "21": { value: job1 } } : {}),                     // Related Job
-});
-console.log(`  Created attachment ID: ${attachmentId}`);
+// Posted directly on the Attachments table with vendor + job links (no daily log needed).
+// Requires a job — skipped if none exist.
+let attachmentId = null;
+if (!job1) {
+  console.log("\nSkipping attachment — no job record available.");
+} else {
+  console.log("\nCreating attachment record...");
+  attachmentId = await createRecord(ATTACHMENTS, {
+    "8":  { value: vendorId },                                        // Related Sub/Vendor
+    "21": { value: job1 },                                           // Related Job
+    "20": { value: "test-placeholder.txt" },                         // File Name
+    "16": { value: "[TEST] Placeholder attachment for seed script" }, // Description
+    // fid 52 (Category) omitted — restricted dropdown, unknown valid choices
+    // fid 129 (URL) omitted — formula field, cannot be written
+  });
+  console.log(`  Created attachment ID: ${attachmentId}`);
+}
 
 // ── Manifest ──────────────────────────────────────────────────────────────────
 const base = process.env.PORTAL_BASE ?? "http://localhost:3000";
@@ -297,7 +302,7 @@ console.log(`
   Assignment IDs:  ${assignmentIds.length ? assignmentIds.join(", ") : "(skipped — no existing jobs found)"}
   PO IDs:          ${poIds.join(", ")}
   Daily Log IDs:   ${logIds.join(", ")}
-  Attachment ID:   ${attachmentId}
+  Attachment ID:   ${attachmentId ?? "(skipped — no job)"}
 
   Portal URL:      ${base}/v/${portalToken}
 

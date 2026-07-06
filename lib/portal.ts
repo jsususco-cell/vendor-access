@@ -178,22 +178,9 @@ async function queryDailyLogs(where: string) {
   }));
 }
 
-/** Attachments (photos/documents) linked to daily logs with "Sub/Vendors" permission. */
+/** Attachments (photos/documents) for this vendor, newest first. */
 export async function getAttachments(vendorId: number) {
-  // Step 1: find daily logs with Sub/Vendors permission and attachments
-  const dlWhere = `{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Subs/Vendors'}AND{${DL.dlAttachCount}.GT.0}`;
-  const dlRes = await queryRecords({
-    from: TABLES.dailyLogs,
-    where: dlWhere,
-    select: [DL.recordId],
-    options: { top: 500 },
-  });
-  const dlIds = (dlRes.data ?? []).map((r) => Number(fv(r, DL.recordId))).filter(Boolean);
-  if (!dlIds.length) return [];
-
-  // Step 2: fetch attachments linked to those daily logs
-  const orClauses = dlIds.map((id) => `{${A.dailyLog}.EX.'${id}'}`);
-  return queryAttachments(`(${orClauses.join("OR")})`);
+  return queryAttachments(`{${A.vendor}.EX.'${vendorId}'}`);
 }
 
 async function queryAttachments(where: string) {
@@ -263,21 +250,11 @@ export async function uploadAttachment(
   vendorId: number,
   input: { jobId: number; fileName: string; base64: string; description?: string }
 ): Promise<number> {
-  // Every attachment must be linked to a daily log so it appears in the main files section.
-  // Create a minimal daily log for this upload.
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const dailyLogId = await createDailyLog(vendorId, {
-    jobId: input.jobId,
-    date: todayStr,
-    title: `Attachment: ${input.fileName}`,
-  });
-
   const data: Record<number, { value: unknown }> = {
     [A.vendor]: { value: vendorId },
     [A.file]: { value: { fileName: input.fileName, data: input.base64 } },
     [A.fileName]: { value: input.fileName },
     [A.job]: { value: input.jobId },
-    [A.dailyLog]: { value: dailyLogId },
   };
   if (input.description) data[A.desc] = { value: input.description };
   return createRecord(TABLES.attachments, data);
