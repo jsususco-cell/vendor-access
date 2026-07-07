@@ -449,7 +449,7 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [f, setF] = useState<any>({ jobId: "", date: today(), title: "", employees: "", work: "", phase: "", weather: "", notes: "", corrections: false, correctionNotes: "" });
+  const [f, setF] = useState<any>({ jobId: "", date: today(), title: "", work: "", phase: "", notes: "", corrections: false, correctionNotes: "" });
   const set = (k: string, v: unknown) => setF((s: any) => ({ ...s, [k]: v }));
 
   useEffect(() => {
@@ -495,10 +495,8 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
           jobId: f.jobId ? Number(f.jobId) : undefined,
           date: f.date || undefined,
           title: f.title || undefined,
-          employees: f.employees ? Number(f.employees) : undefined,
           work: f.work || undefined,
           phase: f.phase || undefined,
-          weather: f.weather || undefined,
           notes: f.notes || undefined,
           corrections: !!f.corrections,
           correctionNotes: f.correctionNotes || undefined,
@@ -522,7 +520,7 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
       } else if (!err) {
         setMsg("Daily log submitted with attachment.");
       }
-      setF({ jobId: "", date: today(), title: "", employees: "", work: "", phase: "", weather: "", notes: "", corrections: false, correctionNotes: "" });
+      setF({ jobId: "", date: today(), title: "", work: "", phase: "", notes: "", corrections: false, correctionNotes: "" });
       setFile(null);
       api("daily-logs").then((d: any) => setLogs(d.items || []));
     } catch (e: any) {
@@ -544,7 +542,6 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
         </label>
         <label>Date<input type="date" value={f.date} onChange={(e) => set("date", e.target.value)} /></label>
         <label>Title<input type="text" value={f.title} onChange={(e) => set("title", e.target.value)} /></label>
-        <label># on site<input type="number" min="0" value={f.employees} onChange={(e) => set("employees", e.target.value)} /></label>
       </div>
       <label className="m-full">Work done today<textarea value={f.work} onChange={(e) => set("work", e.target.value)} /></label>
       <div className="m-radios">
@@ -552,7 +549,6 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
           <label key={ph}><input type="radio" name="phase" checked={f.phase === ph} onChange={() => set("phase", ph)} /> {ph[0].toUpperCase() + ph.slice(1)}</label>
         ))}
       </div>
-      <label className="m-full">Weather<input type="text" value={f.weather} onChange={(e) => set("weather", e.target.value)} /></label>
       <label className="m-full">Notes<textarea value={f.notes} onChange={(e) => set("notes", e.target.value)} /></label>
       <label className="m-check"><input type="checkbox" checked={f.corrections} onChange={(e) => set("corrections", e.target.checked)} /> Corrections needed?</label>
       {f.corrections && <label className="m-full">What corrections<textarea value={f.correctionNotes} onChange={(e) => set("correctionNotes", e.target.value)} /></label>}
