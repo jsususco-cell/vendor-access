@@ -448,7 +448,7 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [f, setF] = useState<any>({ jobId: "", date: today(), title: "", work: "", phase: "", notes: "", corrections: false, correctionNotes: "" });
   const set = (k: string, v: unknown) => setF((s: any) => ({ ...s, [k]: v }));
 
@@ -502,26 +502,31 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
           correctionNotes: f.correctionNotes || undefined,
         },
       });
-      // If a file is attached, upload it against the new daily log
-      if (file && result.recordId) {
-        try {
-          const base64 = await fileToBase64(file);
-          await api("upload-attachment", {
-            file: { fileName: file.name, base64 },
-            dailyLogId: result.recordId,
-          });
-        } catch (e: any) {
-          // File upload failed, but log was created — surface warning
-          setErr("Log saved but file upload failed: " + String(e.message || e));
+      // If files are attached, upload them against the new daily log
+      if (files.length > 0 && result.recordId) {
+        let uploadErrors = 0;
+        for (const f of files) {
+          try {
+            const base64 = await fileToBase64(f);
+            await api("upload-attachment", {
+              file: { fileName: f.name, base64 },
+              dailyLogId: result.recordId,
+            });
+          } catch (e: any) {
+            uploadErrors++;
+          }
+        }
+        if (uploadErrors > 0) {
+          setErr(`${uploadErrors} of ${files.length} file(s) failed to upload.`);
         }
       }
-      if (!file || !result.recordId) {
+      if (files.length === 0 || !result.recordId) {
         setMsg("Daily log submitted.");
       } else if (!err) {
-        setMsg("Daily log submitted with attachment.");
+        setMsg(`Daily log submitted with ${files.length} file(s).`);
       }
       setF({ jobId: "", date: today(), title: "", work: "", phase: "", notes: "", corrections: false, correctionNotes: "" });
-      setFile(null);
+      setFiles([]);
       api("daily-logs").then((d: any) => setLogs(d.items || []));
     } catch (e: any) {
       setErr(String(e.message || e));
@@ -552,8 +557,8 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
       <label className="m-full">Notes<textarea value={f.notes} onChange={(e) => set("notes", e.target.value)} /></label>
       <label className="m-check"><input type="checkbox" checked={f.corrections} onChange={(e) => set("corrections", e.target.checked)} /> Corrections needed?</label>
       {f.corrections && <label className="m-full">What corrections<textarea value={f.correctionNotes} onChange={(e) => set("correctionNotes", e.target.value)} /></label>}
-      <label className="m-full">Attachment (optional)<input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
-      {file && <div className="m-muted sm">Selected: {file.name}</div>}
+      <label className="m-full">Attachment(s) (optional)<input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} /></label>
+      {files.length > 0 && <div className="m-muted sm">{files.length} file(s) selected: {files.map((f) => f.name).join(", ")}</div>}
       <div className="m-actions">
         <button className="btn-primary" onClick={submit} disabled={saving}>{saving ? "Submitting…" : "Submit daily log"}</button>
         {msg && <span className="m-ok">{msg}</span>}
