@@ -114,8 +114,8 @@
   </div>
 
   <div id="newForm" class="card" style="display:none; padding:18px; margin-bottom:16px;">
-    <div style="font-weight:700;">Register a new vendor</div>
-    <div class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
+    <div id="nf_title" style="font-weight:700;">Register a new vendor</div>
+    <div id="nf_subtitle" class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
     <div id="nf_fields"></div>
     <div style="margin-top:16px; display:flex; gap:8px; align-items:center;">
       <button id="createBtn">Create &amp; generate link</button>
@@ -416,6 +416,7 @@ async function load(searchTerm) {
         <td>${activeBox}</td>
         <td><div class="flags">${flags}</div></td>
         <td><div class="actions">
+          <button class="ghost sm" onclick="onEdit(${rid})">Edit</button>
           <button class="ghost sm" onclick="onCopy(${rid})">Copy</button>
           <button class="link sm" id="send_${rid}" onclick="onSend(${rid})"${noEmail}>${sendLabel}</button>
         </div></td>
@@ -559,13 +560,77 @@ function collectField(f) {
   return v ? { value: v } : null;
 }
 
+// null = creating a new vendor; a record id = editing that vendor.
+let editingRid = null;
+
+// Fill the form inputs from a queried record ({ fid: {value} }).
+function populateForm(rec) {
+  for (const sec of FORM) for (const f of sec.fields) {
+    const el = $(`nf_${f.fid}`);
+    if (!el) continue;
+    const val = rec[f.fid] ? rec[f.fid].value : undefined;
+    if (f.type === "checkbox") el.checked = !!val;
+    else if (f.type === "multiselect") {
+      const set = new Set(Array.isArray(val) ? val : (val != null && val !== "" ? [val] : []));
+      [...el.options].forEach((o) => { o.selected = set.has(o.value); });
+    } else if (f.type === "multitext") {
+      el.value = Array.isArray(val) ? val.join(", ") : (val || "");
+    } else if (f.type === "rating") {
+      el.value = (val == null || val === "") ? "" : String(val);
+    } else {
+      el.value = (val == null) ? "" : String(val);
+    }
+  }
+}
+
+function resetCreateMode() {
+  editingRid = null;
+  $("nf_title").textContent = "Register a new vendor";
+  $("nf_subtitle").textContent = "Company is required. Everything else is optional.";
+  $("createBtn").textContent = "Create & generate link";
+  $("nf_status").textContent = "";
+  renderForm();
+}
+
+window.onEdit = async (rid) => {
+  showErr("");
+  editingRid = rid;
+  renderForm();
+  $("nf_result").style.display = "none";
+  $("nf_title").textContent = "Edit vendor #" + rid;
+  $("nf_subtitle").textContent = "Update or fill in any missing information, then save. (Blank fields are left unchanged.)";
+  $("createBtn").textContent = "Save changes";
+  const form = $("newForm");
+  form.style.display = "block";
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  const status = $("nf_status");
+  status.textContent = "Loading…";
+  try {
+    const select = [];
+    for (const sec of FORM) for (const f of sec.fields) select.push(f.fid);
+    const q = await qb("/records/query", "POST", { from: VENDOR_TABLE, select, where: `{3.EX.'${rid}'}` });
+    const rec = q.data && q.data[0];
+    if (!rec) { status.textContent = ""; return showErr("Vendor not found."); }
+    populateForm(rec);
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = "";
+    showErr(String(e.message || e));
+  }
+};
+
 $("newBtn").onclick = () => {
   const f = $("newForm");
+  if (editingRid !== null) {
+    resetCreateMode();
+    f.style.display = "block"; $("nf_result").style.display = "none"; $("nf_23").focus();
+    return;
+  }
   const opening = f.style.display === "none";
   f.style.display = opening ? "block" : "none";
   if (opening) { $("nf_result").style.display = "none"; $("nf_23").focus(); }
 };
-$("cancelNew").onclick = () => { $("newForm").style.display = "none"; };
+$("cancelNew").onclick = () => { $("newForm").style.display = "none"; resetCreateMode(); };
 
 $("createBtn").onclick = async () => {
   showErr("");
@@ -580,6 +645,28 @@ $("createBtn").onclick = async () => {
 
   const status = $("nf_status");
   $("createBtn").disabled = true;
+
+  // ----- EDIT MODE: update the existing vendor record -----
+  if (editingRid !== null) {
+    try {
+      status.textContent = "Saving…";
+      data[3] = { value: editingRid };
+      await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
+      toast("Vendor #" + editingRid + " updated");
+      const searchTerm = $("search").value.trim();
+      resetCreateMode();
+      $("newForm").style.display = "none";
+      load(searchTerm);
+    } catch (e) {
+      status.textContent = "";
+      showErr(String(e.message || e));
+    } finally {
+      $("createBtn").disabled = false;
+    }
+    return;
+  }
+
+  // ----- CREATE MODE -----
   try {
     status.textContent = "Creating…";
     const res = await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
