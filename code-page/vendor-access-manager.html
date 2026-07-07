@@ -45,6 +45,9 @@
   button.link { background:var(--green); }
   button.sm { padding:7px 11px; font-size:12px; }
   .actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+  .pager { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding:0 4px; }
+  .pager-btns { display:flex; gap:8px; }
+  .pager button[disabled] { opacity:.45; cursor:not-allowed; }
   .linkout { background:#eef7f1; border:1px solid #bfe8d1; border-radius:12px; padding:12px 14px; margin-bottom:14px; }
   .lo-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   #lo_link { flex:1; min-width:200px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-family:monospace; font-size:12px; background:#fff; }
@@ -153,6 +156,13 @@
       </thead>
       <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
     </table>
+  </div>
+  <div id="pager" class="pager" style="display:none;">
+    <span id="pagerInfo" class="muted"></span>
+    <span class="pager-btns">
+      <button class="ghost sm" id="prevPage">‹ Prev</button>
+      <button class="ghost sm" id="nextPage">Next ›</button>
+    </span>
   </div>
   <div id="err" class="err"></div>
 </div>
@@ -377,13 +387,20 @@ window.onSend = async (rid) => {
   }
 };
 
-async function load(searchTerm) {
+const PAGE_SIZE = 25;
+let curSearch = "";
+let curPage = 0;
+
+async function load(searchTerm, page) {
   showErr("");
+  curSearch = searchTerm || "";
+  curPage = page || 0;
   const tbody = $("rows");
   tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading…</td></tr>';
+  $("pager").style.display = "none";
   let where = "";
-  if (searchTerm) {
-    const s = searchTerm.replace(/['"{}]/g, "");
+  if (curSearch) {
+    const s = curSearch.replace(/['"{}]/g, "");
     where = `{${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'}`;
   }
   try {
@@ -392,8 +409,9 @@ async function load(searchTerm) {
       select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs],
       where: where || undefined,
       sortBy: [{ fieldId: 3, order: "DESC" }],
-      options: { top: 50 },
+      options: { skip: curPage * PAGE_SIZE, top: PAGE_SIZE },
     });
+    const total = (r.metadata && r.metadata.totalRecords) || 0;
     const rows = (r.data || []).map((rec) => {
       const g = (f) => (rec[f] ? rec[f].value : "");
       const rid = g(3);
@@ -423,9 +441,21 @@ async function load(searchTerm) {
       </tr>`;
     });
     tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="muted">No vendors found.</td></tr>';
+    renderPager(total, rows.length);
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="4" class="err">${String(e.message || e)}</td></tr>`;
   }
+}
+
+function renderPager(total, shown) {
+  const pager = $("pager");
+  if (!total || total <= PAGE_SIZE) { pager.style.display = "none"; return; }
+  const start = curPage * PAGE_SIZE + 1;
+  const end = curPage * PAGE_SIZE + shown;
+  $("pagerInfo").textContent = "Showing " + start + "–" + end + " of " + total;
+  $("prevPage").disabled = curPage === 0;
+  $("nextPage").disabled = end >= total;
+  pager.style.display = "flex";
 }
 
 // config check
@@ -711,10 +741,12 @@ $("lo_copy").onclick = async () => {
 
 renderForm();
 
-$("searchBtn").onclick = () => load($("search").value.trim());
-$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim()); });
-$("recentBtn").onclick = () => { $("search").value = ""; load(""); };
-load("");
+$("searchBtn").onclick = () => load($("search").value.trim(), 0);
+$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim(), 0); });
+$("recentBtn").onclick = () => { $("search").value = ""; load("", 0); };
+$("prevPage").onclick = () => { if (curPage > 0) load(curSearch, curPage - 1); };
+$("nextPage").onclick = () => load(curSearch, curPage + 1);
+load("", 0);
 </script>
 </body>
 </html>
