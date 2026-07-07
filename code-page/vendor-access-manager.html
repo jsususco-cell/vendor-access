@@ -63,6 +63,12 @@
   .muted { color:var(--muted); }
   .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s; }
   .toast.show { opacity:1; }
+  .confirm-overlay { position:fixed; inset:0; background:rgba(10,18,35,.5); display:none; align-items:center; justify-content:center; z-index:200; padding:20px; }
+  .confirm-box { background:#fff; border-radius:14px; padding:20px 22px; max-width:400px; width:100%; box-shadow:0 12px 44px rgba(0,0,0,.32); }
+  .confirm-title { font-weight:800; font-size:16px; color:var(--navy); margin-bottom:8px; }
+  .confirm-msg { font-size:14px; color:#374151; line-height:1.55; margin-bottom:18px; }
+  .confirm-msg .cmuted { color:var(--muted); font-size:12.5px; }
+  .confirm-actions { display:flex; justify-content:flex-end; gap:10px; }
   .setup { background:#fff8ec; border:1px solid #f3d9a6; color:#8a5a12; border-radius:12px; padding:12px 14px; font-size:13px; margin-bottom:16px; }
   .nf-lbl { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:5px; }
   .nf-sec { margin-top:18px; }
@@ -151,6 +157,16 @@
   <div id="err" class="err"></div>
 </div>
 <div id="toast" class="toast"></div>
+<div id="confirmModal" class="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">Send invite?</div>
+    <div id="confirmMsg" class="confirm-msg"></div>
+    <div class="confirm-actions">
+      <button class="ghost" id="confirmNo">Cancel</button>
+      <button class="link" id="confirmYes">Send invite</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================ CONFIG — EDIT ME ============================ */
@@ -166,6 +182,7 @@ const FID = {
   email:          28,   // Email
   token:          66,   // AccessKey (reused as the portal token — never overwritten if present)
   inviteSent:     96,   // Invite Sent? (checkbox — flips true after Send)
+  sendInvite:     175,  // Send Portal Invite (checkbox — trigger for the Quickbase Email notification)
   active:         168,  // Portal: Active
   canViewJobs:    169,
   canViewSchedule:170,
@@ -310,31 +327,51 @@ window.onCopy = async (rid) => {
   } catch (e) { showErr(String(e.message || e)); }
 };
 
-// Automated background send — POSTs to the Vercel /api/send-invite endpoint,
-// which emails the vendor from admin@byrdsonservices.com via Gmail. No compose window.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// Custom confirm dialog (window.confirm can be blocked inside the QB iframe).
+function askConfirm(html) {
+  return new Promise((resolve) => {
+    const modal = $("confirmModal"), yes = $("confirmYes"), no = $("confirmNo");
+    $("confirmMsg").innerHTML = html;
+    modal.style.display = "flex";
+    const done = (val) => { modal.style.display = "none"; yes.onclick = null; no.onclick = null; resolve(val); };
+    yes.onclick = () => done(true);
+    no.onclick = () => done(false);
+  });
+}
+
+// Send invite via QUICKBASE'S native Email notification.
+// Requires a confirmation, then flips the "Send Portal Invite" trigger field so the
+// Quickbase Email (Workflow & Permissions ▸ Emails) fires and emails the vendor.
 window.onSend = async (rid) => {
   showErr("");
-  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set in the Code Page CONFIG.");
-  if (!SEND_KEY) return showErr("SEND_KEY is not set in the Code Page CONFIG (must match Vercel PORTAL_SEND_KEY).");
   const v = window.__vendors[rid];
   if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
+
+  const ok = await askConfirm(
+    "Send the vendor portal invite to <b>" + escapeHtml(v.email) + "</b> via Quickbase email?" +
+    "<br><span class='cmuted'>Only send when you're ready to notify the vendor.</span>"
+  );
+  if (!ok) return;
+
   const btn = $(`send_${rid}`);
   const original = btn ? btn.textContent : "";
   try {
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-    const res = await fetch(PORTAL_BASE.replace(/\/$/, "") + "/api/send-invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-portal-key": SEND_KEY },
-      body: JSON.stringify({ recordId: rid }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-    v.sent = true;
+    // make sure the vendor has an AccessKey so the emailed link works
+    v.key = await ensureKey(rid, v.key);
+    // toggle the trigger (false -> true) so the QB Email notification fires on this change
+    await save(rid, FID.sendInvite, false);
+    await save(rid, FID.sendInvite, true);
+    if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
     if (btn) btn.textContent = "Resend invite";
-    toast("Invite emailed to " + (data.sentTo || v.email));
+    toast("Invite sent to " + v.email + " via Quickbase");
   } catch (e) {
     if (btn) btn.textContent = original || (v.sent ? "Resend invite" : "Send invite");
-    showErr("Auto-send failed: " + (e.message || e) + " — use Copy → Email in Gmail as a fallback.");
+    showErr("Send failed: " + (e.message || e));
   } finally {
     if (btn) btn.disabled = false;
   }

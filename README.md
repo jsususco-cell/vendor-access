@@ -72,10 +72,31 @@ assignments and prints their link). Re-run with flags reset when done.
 3. Deploy. Your portal base URL becomes e.g. `https://byrdson-vendors.vercel.app`.
 4. Put that URL into the Code Page's `PORTAL_BASE`.
 
-## 6. Automated invite email (Gmail)
+## 6. Invite email — Quickbase native Email (recommended)
 
-The **Send invite** button POSTs to `/api/send-invite`, which emails the vendor from
-`admin@byrdsonservices.com` via Gmail SMTP and marks `Invite Sent?` — no compose window.
+The **Send invite** button asks for confirmation, then flips the **Send Portal Invite**
+checkbox (fid 175) on the vendor record. A Quickbase **Email notification** fires on that
+change and emails the vendor the portal link — sent from Quickbase, **no Gmail / SMTP / app
+password needed**.
+
+**Set up the Email once (Quickbase UI — cannot be done via API):**
+
+1. Table **Subs/Vendors** ▸ **Settings ▸ Workflow & Permissions ▸ Emails ▸ + New**.
+2. Trigger: **when a record is modified** with the condition **Send Portal Invite is
+   checked** (fid 175).
+3. Recipient (To): the **Email** field (fid 28).
+4. Subject: e.g. `Your Byrdson Services vendor portal access`.
+5. Body: your message + the portal link, built from AccessKey — type the prefix and insert
+   the field:
+   `https://vendor-access-lyart.vercel.app/v/[AccessKey]`
+6. Save & turn it on.
+
+The Manager Portal flips the checkbox false→true on each confirmed send, so the notification
+re-fires for re-sends. (Optional: a Pipeline can uncheck it afterward for tidiness.)
+
+<details><summary>Alternative: automated email via Gmail (/api/send-invite)</summary>
+
+An earlier option emails the vendor from `admin@byrdsonservices.com` via Gmail SMTP.
 
 **Google no longer allows SMTP with the normal account password.** You must use an
 **App Password**:
@@ -93,6 +114,8 @@ If auto-send ever fails, staff can still **Copy → Email in Gmail** (opens Gmai
 
 > Workspace admins can alternatively use a Gmail **OAuth2 / service account** instead of an
 > App Password; swap the nodemailer `auth` block in `app/api/send-invite/route.ts`.
+
+</details>
 
 ## 5. Add the Code Page in Quickbase
 
