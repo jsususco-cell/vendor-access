@@ -122,7 +122,7 @@ export default function PortalClient({
 
       <div className="footnote">Byrdson Services · Private vendor access</div>
 
-      {modal === "daily" && <DailyLogModal jobs={jobs} api={api} onClose={() => setModal(null)} />}
+      {modal === "daily" && <DailyLogModal jobs={jobs} api={api} onViewFile={openFileViewer} onClose={() => setModal(null)} />}
       {modal === "photos" && <PhotosModal jobs={jobs} api={api} onViewFile={openFileViewer} onClose={() => setModal(null)} />}
       {modal === "schedule" && (
         <ListModal title="Schedule" api={api} action="schedule" onClose={() => setModal(null)} empty="No schedule items yet." row={rowSchedule} detail={detailSchedule} />
@@ -442,12 +442,13 @@ function POModal({ api, onClose }: { api: any; onClose: () => void }) {
 }
 
 /* ---------- Daily Log create + list + per-log detail ---------- */
-function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose: () => void }) {
+function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; onViewFile: (recordId: number, fileName: string, rawUrl: string) => void; onClose: () => void }) {
   const [logs, setLogs] = useState<any[] | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [f, setF] = useState<any>({ jobId: "", date: today(), title: "", employees: "", work: "", phase: "", weather: "", notes: "", corrections: false, correctionNotes: "" });
   const set = (k: string, v: unknown) => setF((s: any) => ({ ...s, [k]: v }));
 
@@ -458,6 +459,7 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
 
   if (sel !== null && logs) {
     const l = logs[sel];
+    const attachments: any[] = l.attachments || [];
     return (
       <Modal title="Daily Log" onClose={onClose} onBack={() => setSel(null)}>
         <div className="detail">
@@ -468,6 +470,16 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
           <KV label="Work done" value={l.work} />
           <KV label="Weather" value={l.weather} />
           <KV label="Notes" value={l.notes} />
+          {attachments.length > 0 && (
+            <div className="sub">
+              <div className="sub-h">Attachments<span className="sub-cnt">{attachments.length}</span></div>
+              {attachments.map((a: any, i: number) => (
+                <button key={i} className="sub-row link link-btn" onClick={() => a.recordId && onViewFile(a.recordId, a.fileName || "File", a.url || "")}>
+                  {a.fileName || "File"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </Modal>
     );
@@ -478,7 +490,7 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
     if (!f.title && !f.work) return setErr("Add a title or describe the work done.");
     setSaving(true);
     try {
-      await api("create-daily-log", {
+      const result = await api("create-daily-log", {
         log: {
           jobId: f.jobId ? Number(f.jobId) : undefined,
           date: f.date || undefined,
@@ -492,8 +504,26 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
           correctionNotes: f.correctionNotes || undefined,
         },
       });
-      setMsg("Daily log submitted.");
+      // If a file is attached, upload it against the new daily log
+      if (file && result.recordId) {
+        try {
+          const base64 = await fileToBase64(file);
+          await api("upload-attachment", {
+            file: { fileName: file.name, base64 },
+            dailyLogId: result.recordId,
+          });
+        } catch (e: any) {
+          // File upload failed, but log was created — surface warning
+          setErr("Log saved but file upload failed: " + String(e.message || e));
+        }
+      }
+      if (!file || !result.recordId) {
+        setMsg("Daily log submitted.");
+      } else if (!err) {
+        setMsg("Daily log submitted with attachment.");
+      }
       setF({ jobId: "", date: today(), title: "", employees: "", work: "", phase: "", weather: "", notes: "", corrections: false, correctionNotes: "" });
+      setFile(null);
       api("daily-logs").then((d: any) => setLogs(d.items || []));
     } catch (e: any) {
       setErr(String(e.message || e));
@@ -526,6 +556,8 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
       <label className="m-full">Notes<textarea value={f.notes} onChange={(e) => set("notes", e.target.value)} /></label>
       <label className="m-check"><input type="checkbox" checked={f.corrections} onChange={(e) => set("corrections", e.target.checked)} /> Corrections needed?</label>
       {f.corrections && <label className="m-full">What corrections<textarea value={f.correctionNotes} onChange={(e) => set("correctionNotes", e.target.value)} /></label>}
+      <label className="m-full">Attachment (optional)<input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
+      {file && <div className="m-muted sm">Selected: {file.name}</div>}
       <div className="m-actions">
         <button className="btn-primary" onClick={submit} disabled={saving}>{saving ? "Submitting…" : "Submit daily log"}</button>
         {msg && <span className="m-ok">{msg}</span>}
@@ -534,7 +566,7 @@ function DailyLogModal({ jobs, api, onClose }: { jobs: Job[]; api: any; onClose:
 
       <div className="m-sec">Submitted logs</div>
       {logs === null ? <div className="m-muted">Loading…</div> : logs.length === 0 ? <div className="m-muted">None yet.</div> : logs.map((l, i) => (
-        <Row key={i} onClick={() => setSel(i)} main={l.title} meta={[l.job, l.date ? fmtDate(l.date) : ""].filter(Boolean).join(" · ")} />
+        <Row key={i} onClick={() => setSel(i)} main={l.title} meta={[l.job, l.date ? fmtDate(l.date) : "", l.attachCount ? l.attachCount + " file(s)" : ""].filter(Boolean).join(" · ")} />
       ))}
     </Modal>
   );

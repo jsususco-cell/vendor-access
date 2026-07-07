@@ -85,12 +85,9 @@ export async function getAssignedJobs(vendorId: number): Promise<Job[]> {
   }));
 }
 
-/** Schedule items for all of a vendor's assigned jobs. */
+/** Schedule items assigned to a specific subvendor. */
 export async function getSchedule(vendorId: number) {
-  const jobs = await getAssignedJobs(vendorId);
-  const jobIds = Array.from(new Set(jobs.map((j) => j.jobId).filter(Boolean))).slice(0, 120);
-  if (!jobIds.length) return [];
-  const where = jobIds.map((id) => `{${S.job}.EX.'${id}'}`).join("OR");
+  const where = `{${S.subVendor}.EX.'${vendorId}'}`;
   return querySchedule(where);
 }
 
@@ -156,7 +153,47 @@ async function queryPOs(where: string, pag?: { skip?: number; top?: number }): P
 
 /** Daily logs the vendor has submitted, visible only when Permissions includes "Subs/Vendors". */
 export async function getDailyLogs(vendorId: number) {
-  return queryDailyLogs(`{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Subs/Vendors'}`);
+  const where = `{${DL.vendor}.EX.'${vendorId}'}AND{${DL.permission}.CT.'Subs/Vendors'}`;
+  const r = await queryRecords({
+    from: TABLES.dailyLogs,
+    where,
+    select: [DL.recordId, DL.title, DL.actualDate, DL.date, DL.jobName, DL.notes, DL.work, DL.weather, DL.employees, DL.dlAttachCount],
+    sortBy: [{ fieldId: DL.actualDate, order: "DESC" }],
+    options: { top: 200 },
+  });
+  const logs = (r.data ?? []).map((row) => ({
+    recordId: Number(fv(row, DL.recordId) ?? 0),
+    title: String(fv(row, DL.title) ?? "Daily Log"),
+    date: fv(row, DL.actualDate) ?? fv(row, DL.date),
+    job: String(fv(row, DL.jobName) ?? ""),
+    notes: String(fv(row, DL.notes) ?? ""),
+    work: String(fv(row, DL.work) ?? ""),
+    weather: String(fv(row, DL.weather) ?? ""),
+    employees: fv(row, DL.employees),
+    attachments: [] as any[],
+    attachCount: Number(fv(row, DL.dlAttachCount) ?? 0),
+  }));
+
+  // Fetch attachments for all returned daily logs in one query
+  if (logs.length > 0 && A.dailyLog > 0) {
+    const logIds = logs.map((l) => l.recordId).filter(Boolean);
+    if (logIds.length) {
+      const attachWhere = logIds.map((id) => `{${A.dailyLog}.EX.'${id}'}`).join("OR");
+      const attachments = await queryAttachments(attachWhere, 500);
+      const byLog = new Map<number, any[]>();
+      for (const a of attachments) {
+        const dlId = a.dailyLogId;
+        if (dlId) {
+          if (!byLog.has(dlId)) byLog.set(dlId, []);
+          byLog.get(dlId)!.push(a);
+        }
+      }
+      for (const log of logs) {
+        log.attachments = byLog.get(log.recordId) || [];
+      }
+    }
+  }
+  return logs;
 }
 
 async function queryDailyLogs(where: string) {
@@ -183,13 +220,13 @@ export async function getAttachments(vendorId: number) {
   return queryAttachments(`{${A.vendor}.EX.'${vendorId}'}`);
 }
 
-async function queryAttachments(where: string) {
+async function queryAttachments(where: string, top: number = 200) {
   const r = await queryRecords({
     from: TABLES.attachments,
     where,
-    select: [A.recordId, A.fileName, A.desc, A.category, A.url, A.altUrl, A.created],
+    select: [A.recordId, A.fileName, A.desc, A.category, A.url, A.altUrl, A.created, A.dailyLog],
     sortBy: [{ fieldId: A.created, order: "DESC" }],
-    options: { top: 200 },
+    options: { top },
   });
   return (r.data ?? []).map((row) => ({
     recordId: Number(fv(row, A.recordId) ?? 0),
@@ -198,6 +235,7 @@ async function queryAttachments(where: string) {
     category: String(fv(row, A.category) ?? ""),
     url: String(fv(row, A.url) ?? fv(row, A.altUrl) ?? ""),
     created: fv(row, A.created),
+    dailyLogId: Number(fv(row, A.dailyLog) ?? 0),
   }));
 }
 
@@ -248,14 +286,15 @@ export async function createDailyLog(vendorId: number, input: DailyLogInput): Pr
 
 export async function uploadAttachment(
   vendorId: number,
-  input: { jobId: number; fileName: string; base64: string; description?: string }
+  input: { jobId?: number; dailyLogId?: number; fileName: string; base64: string; description?: string }
 ): Promise<number> {
   const data: Record<number, { value: unknown }> = {
     [A.vendor]: { value: vendorId },
     [A.file]: { value: { fileName: input.fileName, data: input.base64 } },
     [A.fileName]: { value: input.fileName },
-    [A.job]: { value: input.jobId },
   };
+  if (input.jobId) data[A.job] = { value: input.jobId };
+  if (input.dailyLogId && A.dailyLog > 0) data[A.dailyLog] = { value: input.dailyLogId };
   if (input.description) data[A.desc] = { value: input.description };
   return createRecord(TABLES.attachments, data);
 }

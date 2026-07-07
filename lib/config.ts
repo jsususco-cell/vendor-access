@@ -20,6 +20,7 @@ export const TABLES = {
 // Schedule Items (buskqh27f)
 export const SCHEDULE_FIELDS = {
   recordId: 3, title: 8, complete: 9, percent: 10, start: 12, end: 13, job: 20, jobName: 21, notes: 30,
+  subVendor: 343,  // Related Sub/Vendor (FK to buskqh272) — filters schedule to a specific subvendor
 };
 
 // Purchase Orders (bukmrrvkz)
