@@ -45,6 +45,9 @@
   button.link { background:var(--green); }
   button.sm { padding:7px 11px; font-size:12px; }
   .actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+  .pager { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding:0 4px; }
+  .pager-btns { display:flex; gap:8px; }
+  .pager button[disabled] { opacity:.45; cursor:not-allowed; }
   .linkout { background:#eef7f1; border:1px solid #bfe8d1; border-radius:12px; padding:12px 14px; margin-bottom:14px; }
   .lo-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   #lo_link { flex:1; min-width:200px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-family:monospace; font-size:12px; background:#fff; }
@@ -63,6 +66,12 @@
   .muted { color:var(--muted); }
   .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s; }
   .toast.show { opacity:1; }
+  .confirm-overlay { position:fixed; inset:0; background:rgba(10,18,35,.5); display:none; align-items:center; justify-content:center; z-index:200; padding:20px; }
+  .confirm-box { background:#fff; border-radius:14px; padding:20px 22px; max-width:400px; width:100%; box-shadow:0 12px 44px rgba(0,0,0,.32); }
+  .confirm-title { font-weight:800; font-size:16px; color:var(--navy); margin-bottom:8px; }
+  .confirm-msg { font-size:14px; color:#374151; line-height:1.55; margin-bottom:18px; }
+  .confirm-msg .cmuted { color:var(--muted); font-size:12.5px; }
+  .confirm-actions { display:flex; justify-content:flex-end; gap:10px; }
   .setup { background:#fff8ec; border:1px solid #f3d9a6; color:#8a5a12; border-radius:12px; padding:12px 14px; font-size:13px; margin-bottom:16px; }
   .nf-lbl { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:5px; }
   .nf-sec { margin-top:18px; }
@@ -108,8 +117,8 @@
   </div>
 
   <div id="newForm" class="card" style="display:none; padding:18px; margin-bottom:16px;">
-    <div style="font-weight:700;">Register a new vendor</div>
-    <div class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
+    <div id="nf_title" style="font-weight:700;">Register a new vendor</div>
+    <div id="nf_subtitle" class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
     <div id="nf_fields"></div>
     <div style="margin-top:16px; display:flex; gap:8px; align-items:center;">
       <button id="createBtn">Create &amp; generate link</button>
@@ -148,9 +157,26 @@
       <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
+  <div id="pager" class="pager" style="display:none;">
+    <span id="pagerInfo" class="muted"></span>
+    <span class="pager-btns">
+      <button class="ghost sm" id="prevPage">‹ Prev</button>
+      <button class="ghost sm" id="nextPage">Next ›</button>
+    </span>
+  </div>
   <div id="err" class="err"></div>
 </div>
 <div id="toast" class="toast"></div>
+<div id="confirmModal" class="confirm-overlay">
+  <div class="confirm-box">
+    <div class="confirm-title">Send invite?</div>
+    <div id="confirmMsg" class="confirm-msg"></div>
+    <div class="confirm-actions">
+      <button class="ghost" id="confirmNo">Cancel</button>
+      <button class="link" id="confirmYes">Send invite</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============================ CONFIG — EDIT ME ============================ */
@@ -166,6 +192,7 @@ const FID = {
   email:          28,   // Email
   token:          66,   // AccessKey (reused as the portal token — never overwritten if present)
   inviteSent:     96,   // Invite Sent? (checkbox — flips true after Send)
+  sendInvite:     175,  // Send Portal Invite (checkbox — trigger for the Quickbase Email notification)
   active:         168,  // Portal: Active
   canViewJobs:    169,
   canViewSchedule:170,
@@ -310,43 +337,70 @@ window.onCopy = async (rid) => {
   } catch (e) { showErr(String(e.message || e)); }
 };
 
-// Automated background send — POSTs to the Vercel /api/send-invite endpoint,
-// which emails the vendor from admin@byrdsonservices.com via Gmail. No compose window.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// Custom confirm dialog (window.confirm can be blocked inside the QB iframe).
+function askConfirm(html) {
+  return new Promise((resolve) => {
+    const modal = $("confirmModal"), yes = $("confirmYes"), no = $("confirmNo");
+    $("confirmMsg").innerHTML = html;
+    modal.style.display = "flex";
+    const done = (val) => { modal.style.display = "none"; yes.onclick = null; no.onclick = null; resolve(val); };
+    yes.onclick = () => done(true);
+    no.onclick = () => done(false);
+  });
+}
+
+// Send invite via QUICKBASE'S native Email notification.
+// Requires a confirmation, then flips the "Send Portal Invite" trigger field so the
+// Quickbase Email (Workflow & Permissions ▸ Emails) fires and emails the vendor.
 window.onSend = async (rid) => {
   showErr("");
-  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set in the Code Page CONFIG.");
-  if (!SEND_KEY) return showErr("SEND_KEY is not set in the Code Page CONFIG (must match Vercel PORTAL_SEND_KEY).");
   const v = window.__vendors[rid];
   if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
+
+  const ok = await askConfirm(
+    "Send the vendor portal invite to <b>" + escapeHtml(v.email) + "</b> via Quickbase email?" +
+    "<br><span class='cmuted'>Only send when you're ready to notify the vendor.</span>"
+  );
+  if (!ok) return;
+
   const btn = $(`send_${rid}`);
   const original = btn ? btn.textContent : "";
   try {
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-    const res = await fetch(PORTAL_BASE.replace(/\/$/, "") + "/api/send-invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-portal-key": SEND_KEY },
-      body: JSON.stringify({ recordId: rid }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-    v.sent = true;
+    // make sure the vendor has an AccessKey so the emailed link works
+    v.key = await ensureKey(rid, v.key);
+    // toggle the trigger (false -> true) so the QB Email notification fires on this change
+    await save(rid, FID.sendInvite, false);
+    await save(rid, FID.sendInvite, true);
+    if (!v.sent) { await save(rid, FID.inviteSent, true); v.sent = true; }
     if (btn) btn.textContent = "Resend invite";
-    toast("Invite emailed to " + (data.sentTo || v.email));
+    toast("Invite sent to " + v.email + " via Quickbase");
   } catch (e) {
     if (btn) btn.textContent = original || (v.sent ? "Resend invite" : "Send invite");
-    showErr("Auto-send failed: " + (e.message || e) + " — use Copy → Email in Gmail as a fallback.");
+    showErr("Send failed: " + (e.message || e));
   } finally {
     if (btn) btn.disabled = false;
   }
 };
 
-async function load(searchTerm) {
+const PAGE_SIZE = 25;
+let curSearch = "";
+let curPage = 0;
+
+async function load(searchTerm, page) {
   showErr("");
+  curSearch = searchTerm || "";
+  curPage = page || 0;
   const tbody = $("rows");
   tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading…</td></tr>';
+  $("pager").style.display = "none";
   let where = "";
-  if (searchTerm) {
-    const s = searchTerm.replace(/['"{}]/g, "");
+  if (curSearch) {
+    const s = curSearch.replace(/['"{}]/g, "");
     where = `{${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'}`;
   }
   try {
@@ -355,8 +409,9 @@ async function load(searchTerm) {
       select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs],
       where: where || undefined,
       sortBy: [{ fieldId: 3, order: "DESC" }],
-      options: { top: 50 },
+      options: { skip: curPage * PAGE_SIZE, top: PAGE_SIZE },
     });
+    const total = (r.metadata && r.metadata.totalRecords) || 0;
     const rows = (r.data || []).map((rec) => {
       const g = (f) => (rec[f] ? rec[f].value : "");
       const rid = g(3);
@@ -379,15 +434,28 @@ async function load(searchTerm) {
         <td>${activeBox}</td>
         <td><div class="flags">${flags}</div></td>
         <td><div class="actions">
+          <button class="ghost sm" onclick="onEdit(${rid})">Edit</button>
           <button class="ghost sm" onclick="onCopy(${rid})">Copy</button>
           <button class="link sm" id="send_${rid}" onclick="onSend(${rid})"${noEmail}>${sendLabel}</button>
         </div></td>
       </tr>`;
     });
     tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="muted">No vendors found.</td></tr>';
+    renderPager(total, rows.length);
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="4" class="err">${String(e.message || e)}</td></tr>`;
   }
+}
+
+function renderPager(total, shown) {
+  const pager = $("pager");
+  if (!total || total <= PAGE_SIZE) { pager.style.display = "none"; return; }
+  const start = curPage * PAGE_SIZE + 1;
+  const end = curPage * PAGE_SIZE + shown;
+  $("pagerInfo").textContent = "Showing " + start + "–" + end + " of " + total;
+  $("prevPage").disabled = curPage === 0;
+  $("nextPage").disabled = end >= total;
+  pager.style.display = "flex";
 }
 
 // config check
@@ -522,13 +590,77 @@ function collectField(f) {
   return v ? { value: v } : null;
 }
 
+// null = creating a new vendor; a record id = editing that vendor.
+let editingRid = null;
+
+// Fill the form inputs from a queried record ({ fid: {value} }).
+function populateForm(rec) {
+  for (const sec of FORM) for (const f of sec.fields) {
+    const el = $(`nf_${f.fid}`);
+    if (!el) continue;
+    const val = rec[f.fid] ? rec[f.fid].value : undefined;
+    if (f.type === "checkbox") el.checked = !!val;
+    else if (f.type === "multiselect") {
+      const set = new Set(Array.isArray(val) ? val : (val != null && val !== "" ? [val] : []));
+      [...el.options].forEach((o) => { o.selected = set.has(o.value); });
+    } else if (f.type === "multitext") {
+      el.value = Array.isArray(val) ? val.join(", ") : (val || "");
+    } else if (f.type === "rating") {
+      el.value = (val == null || val === "") ? "" : String(val);
+    } else {
+      el.value = (val == null) ? "" : String(val);
+    }
+  }
+}
+
+function resetCreateMode() {
+  editingRid = null;
+  $("nf_title").textContent = "Register a new vendor";
+  $("nf_subtitle").textContent = "Company is required. Everything else is optional.";
+  $("createBtn").textContent = "Create & generate link";
+  $("nf_status").textContent = "";
+  renderForm();
+}
+
+window.onEdit = async (rid) => {
+  showErr("");
+  editingRid = rid;
+  renderForm();
+  $("nf_result").style.display = "none";
+  $("nf_title").textContent = "Edit vendor #" + rid;
+  $("nf_subtitle").textContent = "Update or fill in any missing information, then save. (Blank fields are left unchanged.)";
+  $("createBtn").textContent = "Save changes";
+  const form = $("newForm");
+  form.style.display = "block";
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  const status = $("nf_status");
+  status.textContent = "Loading…";
+  try {
+    const select = [];
+    for (const sec of FORM) for (const f of sec.fields) select.push(f.fid);
+    const q = await qb("/records/query", "POST", { from: VENDOR_TABLE, select, where: `{3.EX.'${rid}'}` });
+    const rec = q.data && q.data[0];
+    if (!rec) { status.textContent = ""; return showErr("Vendor not found."); }
+    populateForm(rec);
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = "";
+    showErr(String(e.message || e));
+  }
+};
+
 $("newBtn").onclick = () => {
   const f = $("newForm");
+  if (editingRid !== null) {
+    resetCreateMode();
+    f.style.display = "block"; $("nf_result").style.display = "none"; $("nf_23").focus();
+    return;
+  }
   const opening = f.style.display === "none";
   f.style.display = opening ? "block" : "none";
   if (opening) { $("nf_result").style.display = "none"; $("nf_23").focus(); }
 };
-$("cancelNew").onclick = () => { $("newForm").style.display = "none"; };
+$("cancelNew").onclick = () => { $("newForm").style.display = "none"; resetCreateMode(); };
 
 $("createBtn").onclick = async () => {
   showErr("");
@@ -543,6 +675,28 @@ $("createBtn").onclick = async () => {
 
   const status = $("nf_status");
   $("createBtn").disabled = true;
+
+  // ----- EDIT MODE: update the existing vendor record -----
+  if (editingRid !== null) {
+    try {
+      status.textContent = "Saving…";
+      data[3] = { value: editingRid };
+      await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
+      toast("Vendor #" + editingRid + " updated");
+      const searchTerm = $("search").value.trim();
+      resetCreateMode();
+      $("newForm").style.display = "none";
+      load(searchTerm);
+    } catch (e) {
+      status.textContent = "";
+      showErr(String(e.message || e));
+    } finally {
+      $("createBtn").disabled = false;
+    }
+    return;
+  }
+
+  // ----- CREATE MODE -----
   try {
     status.textContent = "Creating…";
     const res = await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
@@ -587,10 +741,12 @@ $("lo_copy").onclick = async () => {
 
 renderForm();
 
-$("searchBtn").onclick = () => load($("search").value.trim());
-$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim()); });
-$("recentBtn").onclick = () => { $("search").value = ""; load(""); };
-load("");
+$("searchBtn").onclick = () => load($("search").value.trim(), 0);
+$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim(), 0); });
+$("recentBtn").onclick = () => { $("search").value = ""; load("", 0); };
+$("prevPage").onclick = () => { if (curPage > 0) load(curSearch, curPage - 1); };
+$("nextPage").onclick = () => load(curSearch, curPage + 1);
+load("", 0);
 </script>
 </body>
 </html>
