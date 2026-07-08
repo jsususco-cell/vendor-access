@@ -40,6 +40,9 @@
   @media (max-width:600px){ .head .htitle { border-left:0; padding-left:0; border-top:1px solid rgba(255,255,255,.2); padding-top:12px; flex-basis:100%; } }
   .bar { display:flex; gap:10px; margin:16px 0; }
   .bar input { flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:10px; font-size:14px; }
+  .bar { flex-wrap:wrap; }
+  .barsel { padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-size:13px; background:#fff; color:#1f2a37; }
+  .site-chip { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; }
   button { background:var(--navy); color:#fff; border:0; border-radius:9px; padding:9px 14px; font-size:13px; font-weight:600; cursor:pointer; }
   button.ghost { background:#eef2f7; color:var(--navy); }
   button.link { background:var(--green); }
@@ -112,6 +115,14 @@
   <div class="bar">
     <input id="search" type="text" placeholder="Search vendors by name or company…" />
     <button id="searchBtn">Search</button>
+    <select id="siteFilter" class="barsel"><option value="">All sites</option></select>
+    <button id="regionBtn" class="ghost" title="Click to cycle: All regions → US vendors only → PR vendors only">All regions</button>
+    <select id="sortSel" class="barsel">
+      <option value="new">Sort: Newest</option>
+      <option value="old">Sort: Oldest</option>
+      <option value="az">Sort: A–Z</option>
+      <option value="za">Sort: Z–A</option>
+    </select>
     <button class="ghost" id="recentBtn">Recent</button>
     <button id="newBtn">+ New vendor</button>
   </div>
@@ -149,12 +160,13 @@
       <thead>
         <tr>
           <th>Vendor</th>
+          <th>Site</th>
           <th>Active</th>
           <th>Can view</th>
           <th style="text-align:right">Invite</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
   <div id="pager" class="pager" style="display:none;">
@@ -198,6 +210,8 @@ const FID = {
   canViewSchedule:170,
   canViewPhotos:  171,
   canViewDocs:    172,
+  state:          10,   // State/Region (site)
+  prAreas:        178,  // # PR Service Areas (rollup) — >0 means the vendor serves PR
 };
 /* ========================================================================= */
 
@@ -389,6 +403,7 @@ window.onSend = async (rid) => {
 
 const PAGE_SIZE = 25;
 let curSearch = "";
+let curSite = "", regionMode = 0, curSort = "new"; // regionMode: 0 All, 1 US only, 2 PR only
 let curPage = 0;
 
 async function load(searchTerm, page) {
@@ -396,19 +411,28 @@ async function load(searchTerm, page) {
   curSearch = searchTerm || "";
   curPage = page || 0;
   const tbody = $("rows");
-  tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
   $("pager").style.display = "none";
-  let where = "";
+  let parts = [];
   if (curSearch) {
     const s = curSearch.replace(/['"{}]/g, "");
-    where = `{${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'}`;
+    parts.push(`({${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'})`);
   }
+  if (regionMode === 1) parts.push(`({${FID.state}.XEX.''}AND{${FID.state}.XEX.'Puerto Rico'})`); // US only (home state is a US state)
+  else if (regionMode === 2) parts.push(`({${FID.state}.EX.'Puerto Rico'}OR{${FID.prAreas}.GT.0})`); // PR only (home in PR or serving PR)
+  else if (curSite === '__blank__') parts.push(`{${FID.state}.EX.''}`);
+  else if (curSite) parts.push(`{${FID.state}.EX.'${curSite}'}`);
+  const where = parts.join("AND");
+  const sortBy = curSort === "az" ? [{ fieldId: FID.company, order: "ASC" }]
+    : curSort === "za" ? [{ fieldId: FID.company, order: "DESC" }]
+    : curSort === "old" ? [{ fieldId: 3, order: "ASC" }]
+    : [{ fieldId: 3, order: "DESC" }];
   try {
     const r = await qb("/records/query", "POST", {
       from: VENDOR_TABLE,
-      select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs],
+      select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs, FID.state, FID.prAreas],
       where: where || undefined,
-      sortBy: [{ fieldId: 3, order: "DESC" }],
+      sortBy: sortBy,
       options: { skip: curPage * PAGE_SIZE, top: PAGE_SIZE },
     });
     const total = (r.metadata && r.metadata.totalRecords) || 0;
@@ -429,8 +453,19 @@ async function load(searchTerm, page) {
         onchange="onToggle(${rid}, ${FID.active}, this.checked)"></span>`;
       const sendLabel = sent ? "Resend invite" : "Send invite";
       const noEmail = email ? "" : ' title="No email on file" disabled style="opacity:.5;cursor:not-allowed"';
+      const st = g(FID.state) || "";
+      const servesPR = Number(g(FID.prAreas) || 0) > 0;
+      const isPR = st === "Puerto Rico" || servesPR;
+      let siteCell;
+      if (!st && !servesPR) siteCell = '<span class="muted">—</span>';
+      else {
+        let chip = st ? escapeHtml(st) : "";
+        if (servesPR && st !== "Puerto Rico") chip += (chip ? " · " : "") + "serves PR";
+        siteCell = `<span class="site-chip" style="background:${isPR ? "#fdeeea" : "#eef2f7"};color:${isPR ? "#b4532f" : "#3d5875"}">${chip}</span>`;
+      }
       return `<tr>
         <td><div class="vname">${company || name || "(no name)"}</div><div class="vsub">${company ? name : ""}${email ? " · " + email : ""}</div></td>
+        <td>${siteCell}</td>
         <td>${activeBox}</td>
         <td><div class="flags">${flags}</div></td>
         <td><div class="actions">
@@ -440,10 +475,10 @@ async function load(searchTerm, page) {
         </div></td>
       </tr>`;
     });
-    tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="muted">No vendors found.</td></tr>';
+    tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="muted">No vendors found.</td></tr>';
     renderPager(total, rows.length);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="4" class="err">${String(e.message || e)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="err">${String(e.message || e)}</td></tr>`;
   }
 }
 
@@ -743,7 +778,32 @@ renderForm();
 
 $("searchBtn").onclick = () => load($("search").value.trim(), 0);
 $("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim(), 0); });
-$("recentBtn").onclick = () => { $("search").value = ""; load("", 0); };
+$("recentBtn").onclick = () => { $("search").value = ""; curSite = ""; regionMode = 0; $("siteFilter").value = ""; updateRegionBtn(); load("", 0); };
+
+// Populate the Site dropdown with the states present in the table (+ counts).
+(async function initSiteFilter(){
+  try {
+    const r = await qb("/records/query", "POST", { from: VENDOR_TABLE, select: [FID.state], options: { top: 2000 } });
+    const counts = {};
+    (r.data || []).forEach(function(rec){ var s = (rec[FID.state] && rec[FID.state].value) || ""; if (s) counts[s] = (counts[s] || 0) + 1; });
+    var blank = (r.data || []).length - Object.values(counts).reduce(function(a,b){ return a + b; }, 0);
+    var opts = Object.keys(counts).sort().map(function(s){ return '<option value="' + s + '">' + s + ' (' + counts[s] + ')</option>'; }).join("");
+    $("siteFilter").innerHTML = '<option value="">All sites</option>' + opts + '<option value="__blank__">(no site — ' + blank + ')</option>';
+  } catch (e) {}
+})();
+
+const REGION_LABELS = ["All regions", "US vendors only", "PR vendors only"];
+function updateRegionBtn(){
+  const b = $("regionBtn");
+  b.textContent = REGION_LABELS[regionMode];
+  b.style.background = regionMode === 1 ? "#e7eefc" : regionMode === 2 ? "#fdeeea" : "";
+  b.style.color = regionMode === 2 ? "#b4532f" : "";
+}
+$("siteFilter").onchange = function(e){ curSite = e.target.value; regionMode = 0; updateRegionBtn(); load(curSearch, 0); };
+// Cycle: All regions → US vendors only → PR vendors only → All regions
+$("regionBtn").onclick = function(){ regionMode = (regionMode + 1) % 3; if (regionMode !== 0) { curSite = ""; $("siteFilter").value = ""; } updateRegionBtn(); load(curSearch, 0); };
+$("sortSel").onchange = function(e){ curSort = e.target.value; load(curSearch, 0); };
+
 $("prevPage").onclick = () => { if (curPage > 0) load(curSearch, curPage - 1); };
 $("nextPage").onclick = () => load(curSearch, curPage + 1);
 load("", 0);
