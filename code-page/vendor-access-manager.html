@@ -5,16 +5,13 @@
   A Quickbase CODE PAGE (Settings ▸ Pages ▸ New page). Used by logged-in Byrdson
   staff to turn on the external vendor portal for a vendor, pick what they can see,
   and copy their private login-free link.
-
   Works on your EXISTING vendors in buskqh272 — it does not create new vendor
   records. The portal token reuses each vendor's existing AccessKey (fid 66); if a
   vendor has none, one is generated and saved. It never overwrites an AccessKey that
   already exists.
-
   Security: embeds NO permanent token. It calls the Quickbase REST API with a
   TEMPORARY token minted from the signed-in staff member's session, so it only works
   for authenticated QB users.
-
   SETUP: set PORTAL_BASE below to your deployed Vercel URL. REALM + field ids are
   already filled in for this app.
 -->
@@ -106,16 +103,20 @@
       <p>Turn on the external portal for a vendor, choose what they see, and copy their private link.</p>
     </div>
   </div>
-
   <div id="setupWarn" class="setup" style="display:none"></div>
-
   <div class="bar">
     <input id="search" type="text" placeholder="Search vendors by name or company…" />
     <button id="searchBtn">Search</button>
+    <select id="siteFilter" style="margin-left:8px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff"><option value="">All sites</option></select>
+    <button id="regionBtn" class="ghost" style="margin-left:6px" title="Click to cycle: All regions → US vendors only → PR vendors only">All regions</button>
+    <select id="sortSel" style="margin-left:6px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff">
+      <option value="new">Sort: newest</option>
+      <option value="site">Sort: site (A–Z)</option>
+      <option value="company">Sort: company (A–Z)</option>
+    </select>
     <button class="ghost" id="recentBtn">Recent</button>
     <button id="newBtn">+ New vendor</button>
   </div>
-
   <div id="newForm" class="card" style="display:none; padding:18px; margin-bottom:16px;">
     <div id="nf_title" style="font-weight:700;">Register a new vendor</div>
     <div id="nf_subtitle" class="muted" style="font-size:12px; margin-bottom:4px;">Company is required. Everything else is optional.</div>
@@ -133,7 +134,6 @@
       </div>
     </div>
   </div>
-
   <div id="linkOut" class="linkout" style="display:none;">
     <div id="lo_who" class="muted" style="margin-bottom:6px; font-weight:600;"></div>
     <div class="lo-row">
@@ -143,18 +143,18 @@
     </div>
     <div class="muted" style="font-size:11px; margin-top:7px;">If Copy is blocked by the dashboard, the link above is already selected — press Ctrl+C. Use “Email in Gmail” to open a pre-filled Gmail message.</div>
   </div>
-
   <div class="card">
     <table>
       <thead>
         <tr>
           <th>Vendor</th>
+          <th>Site</th>
           <th>Active</th>
           <th>Can view</th>
           <th style="text-align:right">Invite</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
   <div id="pager" class="pager" style="display:none;">
@@ -177,7 +177,6 @@
     </div>
   </div>
 </div>
-
 <script>
 /* ============================ CONFIG — EDIT ME ============================ */
 const REALM        = "byrdsonservices.quickbase.com";
@@ -198,35 +197,89 @@ const FID = {
   canViewSchedule:170,
   canViewPhotos:  171,
   canViewDocs:    172,
+  state:          10,   // State/Region (site)
+  prAreas:        178,  // # PR Service Areas (rollup)
 };
 /* ========================================================================= */
-
-const API = "https://api.quickbase.com/v1";
-let tempToken = null;
 const $ = (id) => document.getElementById(id);
-
 function realm() { return REALM || location.hostname; }
-
-async function getTempToken() {
-  if (tempToken) return tempToken;
-  const res = await fetch(`${API}/auth/temporary/${VENDOR_TABLE}`, {
-    method: "GET", credentials: "include", headers: { "QB-Realm-Hostname": realm() },
-  });
-  if (!res.ok) throw new Error("Could not authenticate with Quickbase (" + res.status + ")");
-  tempToken = (await res.json()).temporaryAuthorization;
-  return tempToken;
+/* ===== same-origin XML API transport (session auth + app token) =====
+   Chrome blocks the QB session cookie on cross-site api.quickbase.com calls,
+   so REST temp tokens fail for signed-in users. The legacy XML API on this
+   origin uses the session directly — works for every signed-in employee. */
+const QB_APPTOKEN = "c3ehy5gdh85tybw592yedx9u9vw";
+const CHECKBOX_FIDS = { 96:1, 175:1, 168:1, 169:1, 170:1, 171:1, 172:1 };
+function xesc(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+async function xmlCall(action, inner) {
+  const body = "<qdbapi><apptoken>" + QB_APPTOKEN + "</apptoken>" + inner + "</qdbapi>";
+  const res = await fetch("/db/" + VENDOR_TABLE, { method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/xml", "QUICKBASE-ACTION": action }, body });
+  const txt = await res.text();
+  const doc = new DOMParser().parseFromString(txt, "text/xml");
+  const err = doc.querySelector("errcode");
+  if (err && err.textContent !== "0")
+    throw new Error("Quickbase error " + err.textContent + ": " + ((doc.querySelector("errtext")||{}).textContent||""));
+  return doc;
 }
 async function qb(path, method, body) {
-  const token = await getTempToken();
-  const res = await fetch(API + path, {
-    method, credentials: "include",
-    headers: { "QB-Realm-Hostname": realm(), "Authorization": "QB-TEMP-TOKEN " + token, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error("Quickbase error " + res.status + ": " + (await res.text()));
-  return res.json();
+  if (path === "/records/query") {
+    const clist = (body.select || [3]).join(".");
+    let inner = (body.where ? "<query>" + xesc(body.where) + "</query>" : "") + "<clist>" + clist + "</clist><fmt>structured</fmt>";
+    let opts = [];
+    if (body.options && body.options.skip) opts.push("skp-" + body.options.skip);
+    opts.push("num-" + ((body.options && body.options.top) || 1000));
+    if (body.sortBy && body.sortBy.length) {
+      inner += "<slist>" + body.sortBy.map(function(s){ return s.fieldId; }).join(".") + "</slist>";
+      opts.push("sortorder-" + body.sortBy.map(function(s){ return s.order === "DESC" ? "D" : "A"; }).join(""));
+    }
+    inner += "<options>" + opts.join(".") + "</options>";
+    const doc = await xmlCall("API_DoQuery", inner);
+    const data = [];
+    doc.querySelectorAll("record").forEach(function(rec){
+      const row = {};
+      rec.querySelectorAll("f").forEach(function(f){
+        const fid = f.getAttribute("id");
+        let v = f.textContent;
+        if (CHECKBOX_FIDS[fid]) v = (v === "1");
+        row[fid] = { value: v };
+      });
+      data.push(row);
+    });
+    let total = data.length;
+    if (body.options && (body.options.top || body.options.skip)) {
+      try {
+        const cdoc = await xmlCall("API_DoQueryCount", body.where ? "<query>" + xesc(body.where) + "</query>" : "");
+        total = parseInt((cdoc.querySelector("numMatches")||{}).textContent || data.length, 10);
+      } catch (e) {}
+    }
+    return { data: data, metadata: { totalRecords: total } };
+  }
+  if (path === "/records") {
+    const created = [];
+    let n = 0;
+    for (const row of (body.data || [])) {
+      let rid = null;
+      let fields = "";
+      for (const fid in row) {
+        let v = row[fid] && row[fid].value;
+        if (fid === "3") { rid = v; continue; }
+        if (v === true) v = "1"; else if (v === false) v = "0"; else if (v == null) v = "";
+        fields += '<field fid="' + fid + '">' + xesc(v) + "</field>";
+      }
+      if (rid != null) {
+        await xmlCall("API_EditRecord", "<rid>" + rid + "</rid>" + fields);
+      } else {
+        const doc = await xmlCall("API_AddRecord", fields);
+        created.push(parseInt((doc.querySelector("rid")||{}).textContent || "0", 10));
+      }
+      n++;
+    }
+    return { metadata: { createdRecordIds: created, totalNumberOfRecordsProcessed: n, lineErrors: {} } };
+  }
+  throw new Error("Unsupported path: " + path);
 }
-
 function newAccessKey() {
   const a = new Uint8Array(32); crypto.getRandomValues(a);
   return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -240,11 +293,9 @@ function toast(msg) {
   setTimeout(() => t.classList.remove("show"), 1800);
 }
 function showErr(m) { $("err").textContent = m || ""; }
-
 async function save(rid, fid, value) {
   await qb("/records", "POST", { to: VENDOR_TABLE, data: [{ "3": { value: rid }, [fid]: { value } }] });
 }
-
 // Reuse the vendor's AccessKey; generate + save one only if it's empty.
 // AccessKey may be managed by an existing automation, so read back the stored value.
 async function ensureKey(rid, currentKey) {
@@ -260,7 +311,6 @@ async function ensureKey(rid, currentKey) {
   } catch (e) {}
   return key;
 }
-
 // Robust copy: try the async Clipboard API, then fall back to execCommand (which
 // works inside the Quickbase dashboard iframe where the Clipboard API is blocked).
 async function copyText(text) {
@@ -275,7 +325,6 @@ async function copyText(text) {
     return ok;
   } catch (e) { return false; }
 }
-
 // Reveal the link + a real (user-clickable) mailto anchor so staff always have a
 // working path even if the iframe blocks programmatic copy/mail.
 function showLinkOut(v, link) {
@@ -288,7 +337,6 @@ function showLinkOut(v, link) {
   $("linkOut").style.display = "block";
   $("lo_link").focus(); $("lo_link").select();
 }
-
 // Build a Gmail web-compose URL, pre-filled — opens in the browser (not Outlook).
 function gmailUrl(email, name, link) {
   const subject = "Your Byrdson Services vendor portal access";
@@ -304,26 +352,22 @@ function gmailUrl(email, name, link) {
     "&su=" + encodeURIComponent(subject) +
     "&body=" + encodeURIComponent(body);
 }
-
 // Open the Gmail compose window in a new browser tab (works inside the QB iframe).
 function openMail(href) {
   const a = document.createElement("a");
   a.href = href; a.target = "_blank"; a.rel = "noopener"; a.style.display = "none";
   document.body.appendChild(a); a.click(); a.remove();
 }
-
 function checkbox(rid, fid, checked, label) {
   const id = `c_${rid}_${fid}`;
   return `<label><input type="checkbox" id="${id}" ${checked ? "checked" : ""}
     onchange="onToggle(${rid}, ${fid}, this.checked)"> ${label}</label>`;
 }
-
 window.onToggle = async (rid, fid, checked) => {
   try { await save(rid, fid, checked); toast("Saved"); }
   catch (e) { showErr(String(e.message || e)); }
 };
 window.__vendors = {};
-
 window.onCopy = async (rid) => {
   showErr("");
   if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set — add your Vercel URL in the Code Page CONFIG, then reload. Until then links have no domain.");
@@ -336,11 +380,9 @@ window.onCopy = async (rid) => {
     toast(ok ? "Invite link copied" : "Link ready — it's selected below, press Ctrl+C");
   } catch (e) { showErr(String(e.message || e)); }
 };
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
-
 // Custom confirm dialog (window.confirm can be blocked inside the QB iframe).
 function askConfirm(html) {
   return new Promise((resolve) => {
@@ -352,7 +394,6 @@ function askConfirm(html) {
     no.onclick = () => done(false);
   });
 }
-
 // Send invite via QUICKBASE'S native Email notification.
 // Requires a confirmation, then flips the "Send Portal Invite" trigger field so the
 // Quickbase Email (Workflow & Permissions ▸ Emails) fires and emails the vendor.
@@ -360,13 +401,11 @@ window.onSend = async (rid) => {
   showErr("");
   const v = window.__vendors[rid];
   if (!v.email) return showErr("No email on file for this vendor — add one before sending.");
-
   const ok = await askConfirm(
     "Send the vendor portal invite to <b>" + escapeHtml(v.email) + "</b> via Quickbase email?" +
     "<br><span class='cmuted'>Only send when you're ready to notify the vendor.</span>"
   );
   if (!ok) return;
-
   const btn = $(`send_${rid}`);
   const original = btn ? btn.textContent : "";
   try {
@@ -386,29 +425,33 @@ window.onSend = async (rid) => {
     if (btn) btn.disabled = false;
   }
 };
-
 const PAGE_SIZE = 25;
 let curSearch = "";
+let curSite = "", regionMode = 0, curSort = "new"; // regionMode: 0 = All, 1 = US only, 2 = PR only
 let curPage = 0;
-
 async function load(searchTerm, page) {
   showErr("");
   curSearch = searchTerm || "";
   curPage = page || 0;
   const tbody = $("rows");
-  tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading…</td></tr>';
   $("pager").style.display = "none";
-  let where = "";
+  let parts = [];
   if (curSearch) {
     const s = curSearch.replace(/['"{}]/g, "");
-    where = `{${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'}`;
+    parts.push(`({${FID.name}.CT.'${s}'}OR{${FID.company}.CT.'${s}'})`);
   }
+  if (regionMode === 1) parts.push(`({${FID.state}.XEX.''}AND{${FID.state}.XEX.'Puerto Rico'})`); // US vendors only (home state is a US state)
+  else if (regionMode === 2) parts.push(`({${FID.state}.EX.'Puerto Rico'}OR{${FID.prAreas}.GT.0})`); // PR vendors only (home in PR or serving PR)
+  else if (curSite === '__blank__') parts.push(`{${FID.state}.EX.''}`);
+  else if (curSite) parts.push(`{${FID.state}.EX.'${curSite}'}`);
+  const where = parts.join("AND");
   try {
     const r = await qb("/records/query", "POST", {
       from: VENDOR_TABLE,
-      select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs],
+      select: [3, FID.name, FID.company, FID.email, FID.token, FID.inviteSent, FID.active, FID.canViewJobs, FID.canViewSchedule, FID.canViewPhotos, FID.canViewDocs, FID.state, FID.prAreas],
       where: where || undefined,
-      sortBy: [{ fieldId: 3, order: "DESC" }],
+      sortBy: curSort === "site" ? [{ fieldId: FID.state, order: "ASC" }, { fieldId: FID.company, order: "ASC" }] : curSort === "company" ? [{ fieldId: FID.company, order: "ASC" }] : [{ fieldId: 3, order: "DESC" }],
       options: { skip: curPage * PAGE_SIZE, top: PAGE_SIZE },
     });
     const total = (r.metadata && r.metadata.totalRecords) || 0;
@@ -431,6 +474,7 @@ async function load(searchTerm, page) {
       const noEmail = email ? "" : ' title="No email on file" disabled style="opacity:.5;cursor:not-allowed"';
       return `<tr>
         <td><div class="vname">${company || name || "(no name)"}</div><div class="vsub">${company ? name : ""}${email ? " · " + email : ""}</div></td>
+        <td>${(function(){ var st=g(FID.state)||""; var pr=Number(g(FID.prAreas)||0)>0; if(!st&&!pr) return '<span class="muted">—</span>'; var chip=st? escapeHtml(st):''; if(pr&&st!=='Puerto Rico') chip+=' · serves PR'; return '<span style="display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;background:'+(st==='Puerto Rico'||pr? '#fdeeea':'#eef2f7')+';color:'+(st==='Puerto Rico'||pr? '#b4532f':'#3d5875')+'">'+chip+'</span>'; })()}</td>
         <td>${activeBox}</td>
         <td><div class="flags">${flags}</div></td>
         <td><div class="actions">
@@ -440,13 +484,12 @@ async function load(searchTerm, page) {
         </div></td>
       </tr>`;
     });
-    tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="muted">No vendors found.</td></tr>';
+    tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="muted">No vendors found.</td></tr>';
     renderPager(total, rows.length);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="4" class="err">${String(e.message || e)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="err">${String(e.message || e)}</td></tr>`;
   }
 }
-
 function renderPager(total, shown) {
   const pager = $("pager");
   if (!total || total <= PAGE_SIZE) { pager.style.display = "none"; return; }
@@ -457,7 +500,6 @@ function renderPager(total, shown) {
   $("nextPage").disabled = end >= total;
   pager.style.display = "flex";
 }
-
 // config check
 (function () {
   const missing = Object.entries(FID).filter(([, v]) => !v).map(([k]) => k);
@@ -467,13 +509,10 @@ function renderPager(total, shown) {
   if (!PORTAL_BASE) notes.push("PORTAL_BASE is not set — set it to your Vercel URL so links resolve.");
   if (notes.length) { warn.style.display = "block"; warn.innerHTML = notes.join("<br>"); }
 })();
-
 // ---- New vendor registration form ----
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 const STATES = ["Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","District of Columbia","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Puerto Rico","Rhode Island","South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"];
 const ENV_SUBTYPES = ["Environmental Inspector","Environmental Risk Assessor","Asbestos Abatement","Lead Abatement","General Construction","Specialty Trade","Engineer","Architect"];
-
 // Each field: fid, label, type. type ∈ text|email|date|checkbox|select|multiselect|multitext|textarea|rating
 const FORM = [
   { title: "Contact & Company", fields: [
@@ -539,7 +578,6 @@ const FORM = [
     { fid: FID.canViewDocs,     label: "Can View Docs",    type: "checkbox" },
   ]},
 ];
-
 function renderField(f) {
   const id = `nf_${f.fid}`;
   if (f.type === "checkbox") {
@@ -563,13 +601,11 @@ function renderField(f) {
   }
   return `<div class="nf-field"><label>${f.label}</label>${input}</div>`;
 }
-
 function renderForm() {
   $("nf_fields").innerHTML = FORM.map((sec) =>
     `<div class="nf-sec"><h4>${sec.title}</h4><div class="nf-grid">${sec.fields.map(renderField).join("")}</div></div>`
   ).join("");
 }
-
 // Read a field's value in the shape the QB API expects, or null to omit it.
 function collectField(f) {
   const el = $(`nf_${f.fid}`);
@@ -589,10 +625,8 @@ function collectField(f) {
   const v = el.value.trim();
   return v ? { value: v } : null;
 }
-
 // null = creating a new vendor; a record id = editing that vendor.
 let editingRid = null;
-
 // Fill the form inputs from a queried record ({ fid: {value} }).
 function populateForm(rec) {
   for (const sec of FORM) for (const f of sec.fields) {
@@ -612,7 +646,6 @@ function populateForm(rec) {
     }
   }
 }
-
 function resetCreateMode() {
   editingRid = null;
   $("nf_title").textContent = "Register a new vendor";
@@ -621,7 +654,6 @@ function resetCreateMode() {
   $("nf_status").textContent = "";
   renderForm();
 }
-
 window.onEdit = async (rid) => {
   showErr("");
   editingRid = rid;
@@ -648,7 +680,6 @@ window.onEdit = async (rid) => {
     showErr(String(e.message || e));
   }
 };
-
 $("newBtn").onclick = () => {
   const f = $("newForm");
   if (editingRid !== null) {
@@ -661,21 +692,17 @@ $("newBtn").onclick = () => {
   if (opening) { $("nf_result").style.display = "none"; $("nf_23").focus(); }
 };
 $("cancelNew").onclick = () => { $("newForm").style.display = "none"; resetCreateMode(); };
-
 $("createBtn").onclick = async () => {
   showErr("");
   const company = $("nf_23").value.trim();
   if (!company) return showErr("Company is required.");
-
   const data = {};
   for (const sec of FORM) for (const f of sec.fields) {
     const cell = collectField(f);
     if (cell !== null) data[f.fid] = cell;
   }
-
   const status = $("nf_status");
   $("createBtn").disabled = true;
-
   // ----- EDIT MODE: update the existing vendor record -----
   if (editingRid !== null) {
     try {
@@ -695,13 +722,11 @@ $("createBtn").onclick = async () => {
     }
     return;
   }
-
   // ----- CREATE MODE -----
   try {
     status.textContent = "Creating…";
     const res = await qb("/records", "POST", { to: VENDOR_TABLE, data: [data] });
     const rid = res.metadata.createdRecordIds[0];
-
     // Let the existing AccessKey automation populate fid 66; poll briefly for it.
     status.textContent = "Generating secure key…";
     let key = "";
@@ -713,7 +738,6 @@ $("createBtn").onclick = async () => {
       key = q.data?.[0]?.[FID.token]?.value || "";
     }
     if (!key) { key = newAccessKey(); await save(rid, FID.token, key); } // fallback
-
     status.textContent = "Vendor #" + rid + " created.";
     $("nf_link").value = linkFor(key);
     $("nf_result").style.display = "block";
@@ -726,24 +750,41 @@ $("createBtn").onclick = async () => {
     $("createBtn").disabled = false;
   }
 };
-
 $("nf_copy").onclick = async () => {
   const el = $("nf_link"); el.focus(); el.select();
   const ok = await copyText(el.value);
   toast(ok ? "Invite link copied" : "Link selected — press Ctrl+C");
 };
-
 $("lo_copy").onclick = async () => {
   const el = $("lo_link"); el.focus(); el.select();
   const ok = await copyText(el.value);
   toast(ok ? "Invite link copied" : "Link selected — press Ctrl+C");
 };
-
 renderForm();
-
 $("searchBtn").onclick = () => load($("search").value.trim(), 0);
 $("search").addEventListener("keydown", (e) => { if (e.key === "Enter") load($("search").value.trim(), 0); });
 $("recentBtn").onclick = () => { $("search").value = ""; load("", 0); };
+(async function initSiteFilter(){
+  try {
+    const r = await qb("/records/query", "POST", { from: VENDOR_TABLE, select: [FID.state], options: { top: 2000 } });
+    const counts = {};
+    (r.data||[]).forEach(function(rec){ var s=(rec[FID.state]&&rec[FID.state].value)||""; if(s) counts[s]=(counts[s]||0)+1; });
+    var blank=(r.data||[]).length - Object.values(counts).reduce(function(a,b){return a+b;},0);
+    var opts=Object.keys(counts).sort().map(function(s){ return '<option value="'+s+'">'+s+' ('+counts[s]+')</option>'; }).join("");
+    $("siteFilter").innerHTML='<option value="">All sites</option>'+opts+'<option value="__blank__">(no site — '+blank+')</option>';
+  } catch(e) {}
+})();
+const REGION_LABELS = ["All regions", "US vendors only", "PR vendors only"];
+function updateRegionBtn(){
+  const b = $("regionBtn");
+  b.textContent = REGION_LABELS[regionMode];
+  b.style.background = regionMode === 1 ? "#e7eefc" : regionMode === 2 ? "#fdeeea" : "";
+  b.style.color = regionMode === 2 ? "#b4532f" : "";
+}
+$("siteFilter").onchange = function(e){ curSite=e.target.value; regionMode=0; updateRegionBtn(); load(curSearch,0); };
+// Cycle: All regions → US vendors only → PR vendors only → All regions
+$("regionBtn").onclick = function(){ regionMode=(regionMode+1)%3; if(regionMode!==0){ curSite=""; $("siteFilter").value=""; } updateRegionBtn(); load(curSearch,0); };
+$("sortSel").onchange = function(e){ curSort=e.target.value; load(curSearch,0); };
 $("prevPage").onclick = () => { if (curPage > 0) load(curSearch, curPage - 1); };
 $("nextPage").onclick = () => load(curSearch, curPage + 1);
 load("", 0);
