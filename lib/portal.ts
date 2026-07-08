@@ -243,7 +243,7 @@ async function queryAttachments(where: string, top: number = 200) {
 export async function getJobDetail(vendorId: number, jobId: number) {
   if (!jobId) return { schedule: [], pos: [], dailyLogs: [], attachments: [] };
   const [schedule, poResult, dailyLogs, attachments] = await Promise.all([
-    querySchedule(`{${S.job}.EX.'${jobId}'}`),
+    querySchedule(`{${S.job}.EX.'${jobId}'}AND{${S.subVendor}.EX.'${vendorId}'}`),
     queryPOs(`{${P.job}.EX.'${jobId}'}AND{${P.vendor}.EX.'${vendorId}'}`),
     queryDailyLogs(`{${DL.job}.EX.'${jobId}'}AND{${DL.vendor}.EX.'${vendorId}'}`),
     queryAttachments(`{${A.job}.EX.'${jobId}'}AND{${A.vendor}.EX.'${vendorId}'}`),
