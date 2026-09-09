@@ -351,6 +351,18 @@ window.onCopy = async (rid) => {
   } catch (e) { showErr(String(e.message || e)); }
 };
 
+// Open the vendor's portal in a new tab so staff can preview exactly what the vendor sees.
+window.onView = async (rid) => {
+  showErr("");
+  if (!PORTAL_BASE) return showErr("PORTAL_BASE is not set — add your Vercel URL in the Code Page CONFIG, then reload.");
+  try {
+    const v = window.__vendors[rid];
+    v.key = await ensureKey(rid, v.key);
+    openMail(linkFor(v.key)); // anchor-click opens a new tab (works inside the QB iframe)
+    toast("Opening vendor view…");
+  } catch (e) { showErr(String(e.message || e)); }
+};
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
@@ -470,6 +482,7 @@ async function load(searchTerm, page) {
         <td><div class="flags">${flags}</div></td>
         <td><div class="actions">
           <button class="ghost sm" onclick="onEdit(${rid})">Edit</button>
+          <button class="ghost sm" onclick="onView(${rid})" title="Preview the vendor's portal in a new tab">View</button>
           <button class="ghost sm" onclick="onCopy(${rid})">Copy</button>
           <button class="link sm" id="send_${rid}" onclick="onSend(${rid})"${noEmail}>${sendLabel}</button>
         </div></td>
