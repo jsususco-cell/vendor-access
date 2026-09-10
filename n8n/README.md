@@ -13,13 +13,18 @@ Workflow file: [`vendor-doc-ocr.json`](./vendor-doc-ocr.json). **Live + active i
 Portal (document uploaded, no expiration typed)
   └─ POST N8N_OCR_WEBHOOK  { recordId, table:"buskqh28a", fileFid:10, expirationFid:7, type }
         │
-   [Webhook]  responds 200 immediately, then:
-   [Download file]   GET /v1/files/buskqh28a/{recordId}/10/1   → base64 (in .json.data) + content-type
-   [Build request]   base64 → OpenAI input_file(PDF)/input_image + extraction prompt
-   [OpenAI (vision)] POST api.openai.com/v1/responses (gpt-4o-mini) → "YYYY-MM-DD" or "NONE"
-   [Parse date]      pull the date; if NONE/none-found → stop (fid 7 stays blank)
-   [Write expiration] POST /v1/records  → sets Attachments fid 7 on {recordId}
+   [Webhook] responds 200, then:
+   [Download file] GET /v1/files/buskqh28a/{recordId}/10/1 → base64 (.json.data) + content-type
+   [Build request] base64 → OpenAI input_file(PDF)/input_image + prompt
+   [OpenAI (vision)] POST api.openai.com/v1/responses (gpt-4o-mini) ──ok──► [Parse date] ─┐
+        └──on error──► [Build Gemini request] → [Gemini (vision)] → [Parse date (Gemini)] ─┤
+                                                                                            ▼
+                                                            [Write expiration] → fid 7 on {recordId}
 ```
+
+**Fallback:** if the OpenAI node errors (credits/outage), the item routes to the Gemini branch
+(`gemini-2.5-flash`, `googlePalmApi` credential) which reads the same file and writes the date.
+✅ Verified: forcing an OpenAI failure, Gemini extracted + wrote `2024-12-31`.
 
 Webhook URL: `https://n8n.byrdsonservices.com/webhook/vendor-doc-ocr`
 
@@ -46,5 +51,6 @@ Then any Document uploaded without a typed expiration gets its date read + fid 7
 - **Model:** `gpt-4o-mini` (cheap, vision + PDF). Change it in the Build request node if desired.
 - **Only PDFs and images** are OCR'd; other types → vendor types the date manually.
 - If OpenAI can't find an expiration it returns `NONE` and fid 7 stays blank (correct for W9s, agreements).
-- **Fallback (optional):** a Google Gemini(PaLM) credential also exists in n8n — an error branch to
-  Gemini can be added for resilience if OpenAI ever errors.
+- **Gemini gotcha:** `gemini-2.5-flash` spends "thinking" tokens that count against `maxOutputTokens`,
+  so the fallback sets `thinkingConfig.thinkingBudget: 0` (and `maxOutputTokens: 256`) — otherwise the
+  date gets truncated.
