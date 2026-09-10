@@ -1,0 +1,214 @@
+{
+  "name": "Vendor Doc OCR — Expiration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vendor-doc-ocr",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "vendor-doc-ocr"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.quickbase.com/v1/files/{{ $json.body.table || 'buskqh28a' }}/{{ $json.body.recordId }}/{{ $json.body.fileFid || 10 }}/1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "QB-Realm-Hostname",
+              "value": "={{ $env.QB_REALM || 'byrdsonservices.quickbase.com' }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=QB-USER-TOKEN {{ $env.QB_USER_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "Download file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Anthropic Messages request from the downloaded file.\nconst item = $input.first().json;\nconst b64 = item.body;                                   // base64 file body from \"Download file\"\nconst ctRaw = (item.headers && (item.headers['content-type'] || item.headers['Content-Type'])) || 'application/pdf';\nconst media = String(ctRaw).split(';')[0].trim();\nconst type = (($('Webhook').first().json.body) || {}).type || 'document';\n\nlet block;\nif (media.startsWith('image/')) {\n  block = { type: 'image', source: { type: 'base64', media_type: media, data: b64 } };\n} else {\n  // PDFs (and anything non-image) go in as a PDF document block\n  block = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };\n}\n\nconst prompt =\n  'You are extracting the EXPIRATION date from a vendor compliance document (document type: ' + type + '). ' +\n  'Find the date this document or its insurance coverage expires - look for labels like \"Expiration Date\", ' +\n  '\"Expires\", \"Valid Through\", \"Policy Expiration\", or \"Expiry\". Respond with ONLY that date in strict ' +\n  'YYYY-MM-DD format. If the document genuinely has no expiration (for example a W9 or a signed master ' +\n  'agreement), respond with exactly the word NONE. Output nothing else - no explanation.';\n\nconst anthropicBody = {\n  model: $env.ANTHROPIC_MODEL || 'claude-opus-5',\n  max_tokens: 100,\n  output_config: { effort: 'low' },\n  messages: [{ role: 'user', content: [ block, { type: 'text', text: prompt } ] }],\n};\nreturn [{ json: { anthropicBody } }];"
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Build request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.anthropicBody }}",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Claude (vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull a YYYY-MM-DD date out of Claude's reply; stop if there is none.\nconst resp = $input.first().json;\nlet text = '';\nif (resp && Array.isArray(resp.content)) {\n  const t = resp.content.find((c) => c.type === 'text');\n  text = (t && t.text) || '';\n}\ntext = String(text).trim();\nconst m = text.match(/\\d{4}-\\d{2}-\\d{2}/);\nif (!m) { return []; }                                   // no expiration -> leave fid 7 blank, end here\nconst recordId = (($('Webhook').first().json.body) || {}).recordId;\nreturn [{ json: { recordId, date: m[0] } }];"
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Parse date",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.quickbase.com/v1/records",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "QB-Realm-Hostname",
+              "value": "={{ $env.QB_REALM || 'byrdsonservices.quickbase.com' }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=QB-USER-TOKEN {{ $env.QB_USER_TOKEN }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { to: 'buskqh28a', data: [ { '3': { value: $json.recordId }, '7': { value: $json.date } } ] } }}",
+        "options": {}
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "Write expiration (fid 7)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Build request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build request": {
+      "main": [
+        [
+          {
+            "node": "Claude (vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude (vision)": {
+      "main": [
+        [
+          {
+            "node": "Parse date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse date": {
+      "main": [
+        [
+          {
+            "node": "Write expiration (fid 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
