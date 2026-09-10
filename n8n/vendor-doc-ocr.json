@@ -1,5 +1,5 @@
 {
-  "name": "Vendor Doc OCR — Expiration (Gemini)",
+  "name": "Vendor Doc OCR — Expiration (Claude)",
   "nodes": [
     {
       "parameters": {
@@ -22,16 +22,14 @@
     {
       "parameters": {
         "url": "=https://api.quickbase.com/v1/files/{{ $json.body.table || 'buskqh28a' }}/{{ $json.body.recordId }}/{{ $json.body.fileFid || 10 }}/1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "QB-Realm-Hostname",
-              "value": "={{ $env.QB_REALM || 'byrdsonservices.quickbase.com' }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=QB-USER-TOKEN {{ $env.QB_USER_TOKEN }}"
+              "value": "byrdsonservices.quickbase.com"
             }
           ]
         },
@@ -55,7 +53,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the Gemini generateContent request from the downloaded file.\nconst item = $input.first().json;\nconst b64 = item.body;                                   // base64 file body from \"Download file\"\nconst ctRaw = (item.headers && (item.headers['content-type'] || item.headers['Content-Type'])) || 'application/pdf';\nconst media = String(ctRaw).split(';')[0].trim();        // e.g. application/pdf, image/jpeg, image/png\nconst type = (($('Webhook').first().json.body) || {}).type || 'document';\n\nconst prompt =\n  'You are extracting the EXPIRATION date from a vendor compliance document (document type: ' + type + '). ' +\n  'Find the date this document or its insurance coverage expires - look for labels like \"Expiration Date\", ' +\n  '\"Expires\", \"Valid Through\", \"Policy Expiration\", or \"Expiry\". Respond with ONLY that date in strict ' +\n  'YYYY-MM-DD format. If the document genuinely has no expiration (for example a W9 or a signed master ' +\n  'agreement), respond with exactly the word NONE. Output nothing else - no explanation.';\n\nconst geminiBody = {\n  contents: [{ parts: [ { inline_data: { mime_type: media, data: b64 } }, { text: prompt } ] }],\n  generationConfig: { maxOutputTokens: 100, temperature: 0 },\n};\nreturn [{ json: { geminiBody } }];"
+        "jsCode": "// Build the Anthropic Messages request from the downloaded file.\nconst item = $input.first().json;\nconst b64 = item.body;\nconst ctRaw = (item.headers && (item.headers['content-type'] || item.headers['Content-Type'])) || 'application/pdf';\nconst media = String(ctRaw).split(';')[0].trim();\nconst type = (($('Webhook').first().json.body) || {}).type || 'document';\nlet block;\nif (media.startsWith('image/')) { block = { type: 'image', source: { type: 'base64', media_type: media, data: b64 } }; }\nelse { block = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }; }\nconst prompt =\n  'You are extracting the EXPIRATION date from a vendor compliance document (document type: ' + type + '). ' +\n  'Find the date this document or its insurance coverage expires - look for labels like \"Expiration Date\", ' +\n  '\"Expires\", \"Valid Through\", \"Policy Expiration\", or \"Expiry\". Respond with ONLY that date in strict ' +\n  'YYYY-MM-DD format. If the document genuinely has no expiration (for example a W9 or a signed master ' +\n  'agreement), respond with exactly the word NONE. Output nothing else - no explanation.';\nconst claudeBody = {\n  model: $env.ANTHROPIC_MODEL || 'claude-haiku-4-5',\n  max_tokens: 1024,\n  messages: [{ role: 'user', content: [ block, { type: 'text', text: prompt } ] }],\n};\nreturn [{ json: { claudeBody } }];"
       },
       "id": "33333333-3333-3333-3333-333333333333",
       "name": "Build request",
@@ -69,13 +67,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-goog-api-key",
-              "value": "={{ $env.GEMINI_API_KEY }}"
+              "name": "anthropic-version",
+              "value": "2023-06-01"
             },
             {
               "name": "content-type",
@@ -85,21 +85,27 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.geminiBody }}",
+        "jsonBody": "={{ $json.claudeBody }}",
         "options": {}
       },
       "id": "44444444-4444-4444-4444-444444444444",
-      "name": "Gemini (vision)",
+      "name": "Claude (vision)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         860,
         300
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "kbK37GCdy9kBeUWz",
+          "name": "Anthropic API"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Pull a YYYY-MM-DD date out of Gemini's reply; stop if there is none.\nconst resp = $input.first().json;\nlet text = '';\ntry { text = (resp.candidates[0].content.parts || []).map((p) => p.text || '').join(''); } catch (e) {}\ntext = String(text).trim();\nconst m = text.match(/\\d{4}-\\d{2}-\\d{2}/);\nif (!m) { return []; }                                   // no expiration -> leave fid 7 blank, end here\nconst recordId = (($('Webhook').first().json.body) || {}).recordId;\nreturn [{ json: { recordId, date: m[0] } }];"
+        "jsCode": "// Pull a YYYY-MM-DD date out of Claude's reply; stop if there is none.\nconst resp = $input.first().json;\nlet text = '';\nif (resp && Array.isArray(resp.content)) { const t = resp.content.find((c) => c.type === 'text'); text = (t && t.text) || ''; }\ntext = String(text).trim();\nconst m = text.match(/\\d{4}-\\d{2}-\\d{2}/);\nif (!m) { return []; }\nconst recordId = (($('Webhook').first().json.body) || {}).recordId;\nreturn [{ json: { recordId, date: m[0] } }];"
       },
       "id": "55555555-5555-5555-5555-555555555555",
       "name": "Parse date",
@@ -114,16 +120,14 @@
       "parameters": {
         "method": "POST",
         "url": "https://api.quickbase.com/v1/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "QB-Realm-Hostname",
-              "value": "={{ $env.QB_REALM || 'byrdsonservices.quickbase.com' }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=QB-USER-TOKEN {{ $env.QB_USER_TOKEN }}"
+              "value": "byrdsonservices.quickbase.com"
             },
             {
               "name": "content-type",
@@ -173,14 +177,14 @@
       "main": [
         [
           {
-            "node": "Gemini (vision)",
+            "node": "Claude (vision)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Gemini (vision)": {
+    "Claude (vision)": {
       "main": [
         [
           {
