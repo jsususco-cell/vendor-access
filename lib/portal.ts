@@ -224,7 +224,7 @@ async function queryAttachments(where: string, top: number = 200) {
   const r = await queryRecords({
     from: TABLES.attachments,
     where,
-    select: [A.recordId, A.fileName, A.desc, A.category, A.url, A.altUrl, A.created, A.dailyLog],
+    select: [A.recordId, A.fileName, A.desc, A.category, A.url, A.altUrl, A.created, A.dailyLog, A.type, A.expiration],
     sortBy: [{ fieldId: A.created, order: "DESC" }],
     options: { top },
   });
@@ -236,6 +236,8 @@ async function queryAttachments(where: string, top: number = 200) {
     url: String(fv(row, A.url) ?? fv(row, A.altUrl) ?? ""),
     created: fv(row, A.created),
     dailyLogId: Number(fv(row, A.dailyLog) ?? 0),
+    type: String(fv(row, A.type) ?? ""),
+    expiration: fv(row, A.expiration) ?? null,
   }));
 }
 
@@ -286,7 +288,7 @@ export async function createDailyLog(vendorId: number, input: DailyLogInput): Pr
 
 export async function uploadAttachment(
   vendorId: number,
-  input: { jobId?: number; dailyLogId?: number; fileName: string; base64: string; description?: string }
+  input: { jobId?: number; dailyLogId?: number; fileName: string; base64: string; description?: string; type?: string; expiration?: string }
 ): Promise<number> {
   const data: Record<number, { value: unknown }> = {
     [A.vendor]: { value: vendorId },
@@ -296,5 +298,7 @@ export async function uploadAttachment(
   if (input.jobId) data[A.job] = { value: input.jobId };
   if (input.dailyLogId && A.dailyLog > 0) data[A.dailyLog] = { value: input.dailyLogId };
   if (input.description) data[A.desc] = { value: input.description };
+  if (input.type && A.type > 0) data[A.type] = { value: input.type };
+  if (input.expiration && A.expiration > 0) data[A.expiration] = { value: input.expiration };
   return createRecord(TABLES.attachments, data);
 }

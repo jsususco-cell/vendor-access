@@ -50,6 +50,30 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+// Document types a vendor can upload (Attachments fid 54 choices, minus "Image" = photo).
+const DOC_TYPES = [
+  "General Liability Certificate", "Worker's Comp Certificate", "COI",
+  "Byrdson Master Service Agreement", "W9", "Water Testing", "Proposal",
+];
+
+// Expiry state for a document's Expiration Date (fid 7).
+function expiryStatus(exp: unknown): { label: string; cls: string } | null {
+  if (!exp) return null;
+  const d = new Date(String(exp));
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const days = Math.round((d.getTime() - now.getTime()) / 86400000);
+  if (days < 0) return { label: "Expired", cls: "exp-bad" };
+  if (days <= 30) return { label: `Expires in ${days}d`, cls: "exp-warn" };
+  return { label: "Valid", cls: "exp-ok" };
+}
+function isExpiredDoc(a: any): boolean {
+  if (!a || !a.type || a.type === "Image") return false;
+  const s = expiryStatus(a.expiration);
+  return !!s && s.cls === "exp-bad";
+}
+
 export default function PortalClient({
   token,
   vendor,
@@ -61,6 +85,7 @@ export default function PortalClient({
 }) {
   const [modal, setModal] = useState<Modal>(null);
   const [viewFile, setViewFile] = useState<{ fileName: string; proxyUrl: string; rawUrl: string } | null>(null);
+  const [expiredDocs, setExpiredDocs] = useState(0);
 
   const makeProxyUrl = useCallback(
     (rawUrl: string, fileName: string) =>
@@ -86,8 +111,22 @@ export default function PortalClient({
 
   const p = vendor.perms;
 
+  // Flag expired documents in the vendor's view.
+  useEffect(() => {
+    if (!p.photos && !p.docs) return;
+    api("attachments")
+      .then((d: any) => setExpiredDocs((d.items || []).filter(isExpiredDoc).length))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <main className="content">
+      {expiredDocs > 0 && (
+        <button className="doc-alert" onClick={() => setModal("photos")}>
+          ⚠ {expiredDocs} of your document{expiredDocs > 1 ? "s are" : " is"} expired — tap to re-upload.
+        </button>
+      )}
       <div className="section-label">Vendor Information</div>
       <div className="card full info">
         <div className="info-row"><span>Vendor</span><b>{vendor.company || vendor.name || "—"}</b></div>
@@ -103,7 +142,7 @@ export default function PortalClient({
       <div className="grid">
         <Tile icon="📝" title="Daily Logs" sub="Submit a daily site log" onClick={() => setModal("daily")} />
         {(p.photos || p.docs) && (
-          <Tile icon="📎" title="Photos / Documents" sub="Upload & view files" onClick={() => setModal("photos")} />
+          <Tile icon="📎" title="Photos / Documents" sub={expiredDocs > 0 ? `⚠ ${expiredDocs} expired` : "Upload & view files"} onClick={() => setModal("photos")} />
         )}
         {p.schedule && (
           <Tile icon="📅" title="View Schedule" sub="Milestone dates" onClick={() => setModal("schedule")} />
@@ -573,36 +612,44 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
   );
 }
 
-/* ---------- Photos / Documents upload + list ---------- */
+/* ---------- Photos / Documents upload + list (split, with expiry flags) ---------- */
 function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; onViewFile: (recordId: number, fileName: string, rawUrl: string) => void; onClose: () => void }) {
   const [items, setItems] = useState<any[] | null>(null);
+  const [kind, setKind] = useState<"photo" | "document">("photo");
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState("");
+  const [docType, setDocType] = useState("");
+  const [expiration, setExpiration] = useState("");
   const [desc, setDesc] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  useEffect(() => {
+  function reload() {
     api("attachments").then((d: any) => setItems(d.items || [])).catch(() => setItems([]));
+  }
+  useEffect(() => {
+    reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function upload() {
     setErr(""); setMsg("");
-    if (!jobId) return setErr("Select a job first.");
     if (!file) return setErr("Choose a file first.");
+    if (kind === "document" && !docType) return setErr("Pick a document type.");
     setBusy(true);
     try {
       const base64 = await fileToBase64(file);
       await api("upload-attachment", {
         file: { fileName: file.name, base64 },
-        jobId: Number(jobId),
+        type: kind === "photo" ? "Image" : docType,
+        jobId: kind === "photo" && jobId ? Number(jobId) : undefined,
+        expiration: kind === "document" && expiration ? expiration : undefined,
         description: desc || undefined,
       });
-      setMsg("Uploaded.");
-      setFile(null); setDesc("");
-      api("attachments").then((d: any) => setItems(d.items || []));
+      setMsg(kind === "document" && !expiration ? "Uploaded — reading expiration…" : "Uploaded.");
+      setFile(null); setDesc(""); setExpiration(""); setDocType("");
+      reload();
     } catch (e: any) {
       setErr(String(e.message || e));
     } finally {
@@ -610,38 +657,70 @@ function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any
     }
   }
 
+  const all = items || [];
+  const docs = all.filter((a) => a.type && a.type !== "Image");
+  const photos = all.filter((a) => !a.type || a.type === "Image");
+
   return (
     <Modal title="Photos / Documents" onClose={onClose}>
-      {jobs.length === 0 ? (
-        <div className="m-muted">You have no assigned jobs. Files must be attached to a job — contact your project manager.</div>
+      <div className="m-sec">Upload</div>
+      <div className="seg">
+        <button className={"seg-btn" + (kind === "photo" ? " on" : "")} onClick={() => setKind("photo")}>📷 Photo</button>
+        <button className={"seg-btn" + (kind === "document" ? " on" : "")} onClick={() => setKind("document")}>📄 Document</button>
+      </div>
+
+      {kind === "photo" ? (
+        <div className="m-grid">
+          <label>Job (optional)
+            <select value={jobId} onChange={(e) => setJobId(e.target.value)}>
+              <option value="">— none —</option>
+              {jobs.map((j) => <option key={j.id} value={j.jobId}>{j.name}</option>)}
+            </select>
+          </label>
+          <label>Description<input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+        </div>
       ) : (
         <>
-          <div className="m-sec">Upload a file</div>
           <div className="m-grid">
-            <label>Job <span className="required">*</span>
-              <select value={jobId} onChange={(e) => setJobId(e.target.value)}>
+            <label>Document type <span className="required">*</span>
+              <select value={docType} onChange={(e) => setDocType(e.target.value)}>
                 <option value="">— select —</option>
-                {jobs.map((j) => <option key={j.id} value={j.jobId}>{j.name}</option>)}
+                {DOC_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </label>
-            <label>Description<input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+            <label>Expiration date<input type="date" value={expiration} onChange={(e) => setExpiration(e.target.value)} /></label>
           </div>
-          <label className="m-full">File<input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
-          <div className="m-actions">
-            <button className="btn-primary" onClick={upload} disabled={busy || !jobId}>{busy ? "Uploading…" : "Upload"}</button>
-            {msg && <span className="m-ok">{msg}</span>}
-            {err && <span className="m-err">{err}</span>}
-          </div>
+          <div className="m-hint">Leave the expiration blank and we&apos;ll try to read it from the document automatically.</div>
         </>
       )}
+      <label className="m-full">File<input type="file" accept={kind === "photo" ? "image/*" : undefined} onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
+      <div className="m-actions">
+        <button className="btn-primary" onClick={upload} disabled={busy}>{busy ? "Uploading…" : "Upload"}</button>
+        {msg && <span className="m-ok">{msg}</span>}
+        {err && <span className="m-err">{err}</span>}
+      </div>
 
-      <div className="m-sec">Files</div>
-      {items === null ? <div className="m-muted">Loading…</div> : items.length === 0 ? <div className="m-muted">No files yet.</div> : items.map((a, i) => (
+      <div className="m-sec">Documents</div>
+      {items === null ? <div className="m-muted">Loading…</div> : docs.length === 0 ? <div className="m-muted">No documents yet.</div> : docs.map((a, i) => {
+        const es = expiryStatus(a.expiration);
+        return (
+          <Row
+            key={"d" + i}
+            onClick={a.recordId ? () => onViewFile(a.recordId, a.fileName || "File", a.url || "") : undefined}
+            main={a.fileName || a.type || "Document"}
+            meta={[a.type, a.expiration ? "Exp " + fmtDate(a.expiration) : "", a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")}
+            right={<>{es && <span className={"exp-badge " + es.cls}>{es.label}</span>}{a.recordId ? <span className="pill">View</span> : null}</>}
+          />
+        );
+      })}
+
+      <div className="m-sec">Photos</div>
+      {items === null ? <div className="m-muted">Loading…</div> : photos.length === 0 ? <div className="m-muted">No photos yet.</div> : photos.map((a, i) => (
         <Row
-          key={i}
+          key={"p" + i}
           onClick={a.recordId ? () => onViewFile(a.recordId, a.fileName || "File", a.url || "") : undefined}
-          main={a.fileName || "File"}
-          meta={[a.category, a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")}
+          main={a.fileName || "Photo"}
+          meta={[a.desc, a.created ? fmtDate(a.created) : ""].filter(Boolean).join(" · ")}
           right={a.recordId ? <span className="pill">View</span> : null}
         />
       ))}

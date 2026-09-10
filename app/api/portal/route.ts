@@ -67,16 +67,33 @@ export async function POST(req: Request) {
         }
         const jobId = body.jobId ? Number(body.jobId) : undefined;
         const dailyLogId = body.dailyLogId ? Number(body.dailyLogId) : undefined;
-        if (!jobId && !dailyLogId) {
-          return NextResponse.json({ error: "job or daily log required" }, { status: 400 });
-        }
+        const type = body.type ? String(body.type) : undefined;
+        const expiration = body.expiration ? String(body.expiration) : undefined;
+        const isPhoto = type === "Image" || !type;
+        // Documents attach to the vendor (fid 8) — no job needed, so vendors with no
+        // assigned jobs can still upload their certs/W9/COI. Photos may pin to a job.
         const recordId = await uploadAttachment(id, {
           jobId,
           dailyLogId,
           fileName: String(f.fileName),
           base64: String(f.base64),
           description: body.description ? String(body.description) : undefined,
+          type,
+          expiration,
         });
+        // For documents with no expiration entered, hand off to the n8n Claude-vision
+        // OCR pipeline (if configured) to read + write the expiration date (fid 7).
+        if (!isPhoto && !expiration && process.env.N8N_OCR_WEBHOOK) {
+          try {
+            await fetch(process.env.N8N_OCR_WEBHOOK, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ recordId, table: "buskqh28a", fileFid: 10, expirationFid: 7, type }),
+            });
+          } catch {
+            /* non-fatal — vendor can still enter the date manually */
+          }
+        }
         return NextResponse.json({ ok: true, recordId });
       }
 

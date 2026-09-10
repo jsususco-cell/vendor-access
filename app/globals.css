@@ -325,3 +325,16 @@ body {
 .po-pg-btn:disabled { opacity: .35; cursor: default; }
 .po-pg-active { background: var(--navy); color: #fff; border-color: var(--navy); }
 .po-pg-ellipsis { color: var(--muted); width: 32px; text-align: center; font-size: 14px; user-select: none; }
+
+/* ===== Photos/Documents: segmented toggle, expiry badges, alert ===== */
+.seg { display: inline-flex; background: #eef2f6; border-radius: 10px; padding: 3px; margin-bottom: 12px; gap: 3px; }
+.seg-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 8px; cursor: pointer; }
+.seg-btn.on { background: #fff; color: var(--navy); box-shadow: 0 1px 2px rgba(16,30,60,.12); }
+.m-hint { font-size: 12px; color: var(--muted); margin: -2px 0 12px; }
+.exp-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.exp-badge.exp-bad { background: #fdeaea; color: #b42318; }
+.exp-badge.exp-warn { background: #fff3d6; color: #8a5a12; }
+.exp-badge.exp-ok { background: #e6f6ec; color: #1d8a52; }
+.doc-alert { display: block; width: 100%; text-align: left; border: 0; cursor: pointer; background: #fdeaea; color: #b42318; border: 1px solid #f4c7c2; border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+.doc-alert:hover { background: #fbdedd; }
+.required { color: #b42318; }

@@ -41,7 +41,16 @@ export const DAILYLOG_FIELDS = {
 export const ATTACH_FIELDS = {
   recordId: 3, vendor: 8, job: 21, file: 10, fileName: 20, desc: 16, category: 52, url: 129, altUrl: 68, created: 1,
   dailyLog: 17,  // Related Daily Log (numeric link)
+  type: 54,      // Type - Sub Vendor (multi-choice): "Image" = photo, else a document type
+  expiration: 7, // Expiration Date (OCR-filled for documents; drives the expired flag)
 };
+
+// Document types a vendor can upload (fid 54 choices, minus "Image" which = photo).
+export const VENDOR_DOC_TYPES = [
+  "General Liability Certificate", "Worker's Comp Certificate", "COI",
+  "Byrdson Master Service Agreement", "W9", "Water Testing", "Proposal",
+];
+export const PHOTO_TYPE = "Image";
 
 // ---- buskqh272 : Vendors (holds accounts + unique invite tokens + access flags) ----
 export const VENDOR_FIELDS = {
