@@ -1,5 +1,5 @@
 {
-  "name": "Vendor Doc OCR — Expiration",
+  "name": "Vendor Doc OCR — Expiration (Gemini)",
   "nodes": [
     {
       "parameters": {
@@ -55,7 +55,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the Anthropic Messages request from the downloaded file.\nconst item = $input.first().json;\nconst b64 = item.body;                                   // base64 file body from \"Download file\"\nconst ctRaw = (item.headers && (item.headers['content-type'] || item.headers['Content-Type'])) || 'application/pdf';\nconst media = String(ctRaw).split(';')[0].trim();\nconst type = (($('Webhook').first().json.body) || {}).type || 'document';\n\nlet block;\nif (media.startsWith('image/')) {\n  block = { type: 'image', source: { type: 'base64', media_type: media, data: b64 } };\n} else {\n  // PDFs (and anything non-image) go in as a PDF document block\n  block = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };\n}\n\nconst prompt =\n  'You are extracting the EXPIRATION date from a vendor compliance document (document type: ' + type + '). ' +\n  'Find the date this document or its insurance coverage expires - look for labels like \"Expiration Date\", ' +\n  '\"Expires\", \"Valid Through\", \"Policy Expiration\", or \"Expiry\". Respond with ONLY that date in strict ' +\n  'YYYY-MM-DD format. If the document genuinely has no expiration (for example a W9 or a signed master ' +\n  'agreement), respond with exactly the word NONE. Output nothing else - no explanation.';\n\nconst anthropicBody = {\n  model: $env.ANTHROPIC_MODEL || 'claude-opus-5',\n  max_tokens: 100,\n  output_config: { effort: 'low' },\n  messages: [{ role: 'user', content: [ block, { type: 'text', text: prompt } ] }],\n};\nreturn [{ json: { anthropicBody } }];"
+        "jsCode": "// Build the Gemini generateContent request from the downloaded file.\nconst item = $input.first().json;\nconst b64 = item.body;                                   // base64 file body from \"Download file\"\nconst ctRaw = (item.headers && (item.headers['content-type'] || item.headers['Content-Type'])) || 'application/pdf';\nconst media = String(ctRaw).split(';')[0].trim();        // e.g. application/pdf, image/jpeg, image/png\nconst type = (($('Webhook').first().json.body) || {}).type || 'document';\n\nconst prompt =\n  'You are extracting the EXPIRATION date from a vendor compliance document (document type: ' + type + '). ' +\n  'Find the date this document or its insurance coverage expires - look for labels like \"Expiration Date\", ' +\n  '\"Expires\", \"Valid Through\", \"Policy Expiration\", or \"Expiry\". Respond with ONLY that date in strict ' +\n  'YYYY-MM-DD format. If the document genuinely has no expiration (for example a W9 or a signed master ' +\n  'agreement), respond with exactly the word NONE. Output nothing else - no explanation.';\n\nconst geminiBody = {\n  contents: [{ parts: [ { inline_data: { mime_type: media, data: b64 } }, { text: prompt } ] }],\n  generationConfig: { maxOutputTokens: 100, temperature: 0 },\n};\nreturn [{ json: { geminiBody } }];"
       },
       "id": "33333333-3333-3333-3333-333333333333",
       "name": "Build request",
@@ -69,17 +69,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "x-api-key",
-              "value": "={{ $env.ANTHROPIC_API_KEY }}"
-            },
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
             },
             {
               "name": "content-type",
@@ -89,11 +85,11 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ $json.anthropicBody }}",
+        "jsonBody": "={{ $json.geminiBody }}",
         "options": {}
       },
       "id": "44444444-4444-4444-4444-444444444444",
-      "name": "Claude (vision)",
+      "name": "Gemini (vision)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -103,7 +99,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pull a YYYY-MM-DD date out of Claude's reply; stop if there is none.\nconst resp = $input.first().json;\nlet text = '';\nif (resp && Array.isArray(resp.content)) {\n  const t = resp.content.find((c) => c.type === 'text');\n  text = (t && t.text) || '';\n}\ntext = String(text).trim();\nconst m = text.match(/\\d{4}-\\d{2}-\\d{2}/);\nif (!m) { return []; }                                   // no expiration -> leave fid 7 blank, end here\nconst recordId = (($('Webhook').first().json.body) || {}).recordId;\nreturn [{ json: { recordId, date: m[0] } }];"
+        "jsCode": "// Pull a YYYY-MM-DD date out of Gemini's reply; stop if there is none.\nconst resp = $input.first().json;\nlet text = '';\ntry { text = (resp.candidates[0].content.parts || []).map((p) => p.text || '').join(''); } catch (e) {}\ntext = String(text).trim();\nconst m = text.match(/\\d{4}-\\d{2}-\\d{2}/);\nif (!m) { return []; }                                   // no expiration -> leave fid 7 blank, end here\nconst recordId = (($('Webhook').first().json.body) || {}).recordId;\nreturn [{ json: { recordId, date: m[0] } }];"
       },
       "id": "55555555-5555-5555-5555-555555555555",
       "name": "Parse date",
@@ -177,14 +173,14 @@
       "main": [
         [
           {
-            "node": "Claude (vision)",
+            "node": "Gemini (vision)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Claude (vision)": {
+    "Gemini (vision)": {
       "main": [
         [
           {
@@ -209,6 +205,5 @@
   },
   "settings": {
     "executionOrder": "v1"
-  },
-  "active": false
+  }
 }
