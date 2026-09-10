@@ -1,0 +1,271 @@
+{
+  "name": "Vendor Doc Expiration Reminders",
+  "nodes": [
+    {
+      "id": "n1-schedule-000000000000000000000000",
+      "name": "Daily 8am (Central)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -40,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n2-query-0000000000000000000000000000",
+      "name": "Query docs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.quickbase.com/v1/records/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "QB-Realm-Hostname",
+              "value": "byrdsonservices.quickbase.com"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"from\":\"buskqh28a\",\"where\":\"{8.XEX.''}AND{7.XEX.''}\",\"select\":[3,7,8,9,54,152]}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcl3DtqT5jquGme8",
+          "name": "Quickbase"
+        }
+      }
+    },
+    {
+      "id": "n3-compute-00000000000000000000000000",
+      "name": "Compute due",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const rows = ($input.first().json.data) || [];\nconst recs = rows.map(r => ({\n  rid: r['3'].value,\n  exp: r['7'] ? r['7'].value : null,\n  vendorId: r['8'] ? r['8'].value : null,\n  company: r['9'] ? r['9'].value : '',\n  type: r['54'] ? r['54'].value : '',\n  stage: (r['152'] && r['152'].value !== null && r['152'].value !== '') ? Number(r['152'].value) : 0,\n})).filter(x => x.exp && x.vendorId);\n\n// Renewal supersede: group by vendor+type, keep the NEWEST record (highest id).\nconst byKey = {};\nfor (const x of recs) {\n  const k = x.vendorId + '|' + x.type;\n  if (!byKey[k] || x.rid > byKey[k].rid) byKey[k] = x;\n}\n\nconst now = new Date();\nconst today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));\nconst MS = 86400000;\nconst THRESH = [{stage:1,d:30},{stage:2,d:15},{stage:3,d:7},{stage:4,d:1},{stage:5,d:-1},{stage:6,d:-5}];\n\nconst out = [];\nfor (const x of Object.values(byKey)) {\n  const exp = new Date(x.exp + 'T00:00:00Z');\n  const daysUntil = Math.round((exp.getTime() - today.getTime()) / MS);\n  if (daysUntil > 30 || daysUntil < -10) continue;      // near-term window only\n  let dueStage = 0;\n  for (const t of THRESH) if (daysUntil <= t.d) dueStage = t.stage;\n  if (dueStage > x.stage) {\n    out.push({ json: { recordId: x.rid, vendorId: x.vendorId, company: x.company, type: x.type, expiration: x.exp, daysUntil, newStage: dueStage } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "n4-lookup-0000000000000000000000000000",
+      "name": "Lookup vendor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.quickbase.com/v1/records/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "QB-Realm-Hostname",
+              "value": "byrdsonservices.quickbase.com"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: 'buskqh272', where: \"{3.EX.'\" + $json.vendorId + \"'}\", select: [28, 100, 176] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcl3DtqT5jquGme8",
+          "name": "Quickbase"
+        }
+      }
+    },
+    {
+      "id": "n5-buildemail-000000000000000000000000",
+      "name": "Build email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const v = ($input.first().json.data && $input.first().json.data[0]) || {};\nconst poc = v['28'] ? v['28'].value : '';\nconst contact = (v['100'] ? v['100'].value : '') || '';\nconst portal = (v['176'] ? v['176'].value : '') || 'https://vendor-access-lyart.vercel.app/';\nconst src = $('Compute due').item.json;\nconst { company, type, expiration, daysUntil, recordId, newStage } = src;\n\nconst ERIN = 'erin@excellohomes.com';\nconst to = [ERIN];\nif (poc && /@/.test(poc) && poc.toLowerCase() !== ERIN.toLowerCase()) to.push(poc);\n\nlet when;\nif (daysUntil > 0) when = 'expires in ' + daysUntil + ' day' + (daysUntil === 1 ? '' : 's');\nelse if (daysUntil === 0) when = 'expires today';\nelse { const a = Math.abs(daysUntil); when = 'expired ' + a + ' day' + (a === 1 ? '' : 's') + ' ago'; }\n\nconst expNice = new Date(expiration + 'T00:00:00Z').toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric', timeZone:'UTC' });\nconst subject = (daysUntil < 0 ? '[EXPIRED] ' : '[Reminder] ') + type + ' for ' + company + ' ' + when;\nconst hi = contact ? ('Hi ' + contact + ',') : 'Hello,';\nconst html =\n  '<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222\">' +\n  '<p>' + hi + '</p>' +\n  '<p>This is an automated reminder from Byrdson Services. The following compliance document <b>' + when + '</b>:</p>' +\n  '<table cellpadding=\"6\" style=\"border-collapse:collapse;font-size:14px;margin:8px 0\">' +\n  '<tr><td style=\"color:#666\">Vendor</td><td><b>' + company + '</b></td></tr>' +\n  '<tr><td style=\"color:#666\">Document</td><td>' + type + '</td></tr>' +\n  '<tr><td style=\"color:#666\">Expiration date</td><td>' + expNice + '</td></tr>' +\n  '</table>' +\n  '<p>Please upload the renewed document as soon as possible through your vendor portal:</p>' +\n  '<p><a href=\"' + portal + '\" style=\"background:#1a5fb4;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;display:inline-block\">Upload updated document</a></p>' +\n  '<p style=\"color:#888;font-size:12px\">Once the updated document is uploaded, these reminders stop automatically.</p>' +\n  '</div>';\n\nreturn [{ json: { toList: to.join(','), subject, html, recordId, newStage } }];"
+      }
+    },
+    {
+      "id": "n6-gmail-0000000000000000000000000000",
+      "name": "Send reminder",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1060,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.toList }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "bccList": "admin@byrdsonservices.com",
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "VFSVlQJu0WvJeCVE",
+          "name": "Byrdson Admin Gmail account"
+        }
+      },
+      "webhookId": "9b1a2da2-b9d7-45ef-8f55-ae18a8cf52d9"
+    },
+    {
+      "id": "n7-updatestage-00000000000000000000000",
+      "name": "Update stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.quickbase.com/v1/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "QB-Realm-Hostname",
+              "value": "byrdsonservices.quickbase.com"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: 'buskqh28a', data: [ { '3': { value: $('Build email').item.json.recordId }, '152': { value: $('Build email').item.json.newStage } } ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mcl3DtqT5jquGme8",
+          "name": "Quickbase"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 8am (Central)": {
+      "main": [
+        [
+          {
+            "node": "Query docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query docs": {
+      "main": [
+        [
+          {
+            "node": "Compute due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute due": {
+      "main": [
+        [
+          {
+            "node": "Lookup vendor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup vendor": {
+      "main": [
+        [
+          {
+            "node": "Build email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build email": {
+      "main": [
+        [
+          {
+            "node": "Send reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder": {
+      "main": [
+        [
+          {
+            "node": "Update stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "America/Chicago",
+    "executionOrder": "v1"
+  }
+}
