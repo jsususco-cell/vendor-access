@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { queryRecords, fv, updateField } from "@/lib/quickbase";
 import { TABLES, VENDOR_FIELDS as V } from "@/lib/config";
+import { log, logError } from "@/lib/log";
 
 export const runtime = "nodejs"; // nodemailer needs the Node runtime, not edge
 export const dynamic = "force-dynamic";
@@ -117,9 +118,20 @@ export async function POST(req: Request) {
       /* non-fatal */
     }
 
+    // A portal invite carries a login-free access link to a real vendor, so who it
+    // went to is worth keeping. The link itself is deliberately not recorded.
+    await log({
+      event: "portal.invite.sent",
+      component: "send-invite",
+      message: `Portal invite sent to ${email}`,
+      entity: { type: "vendor", id: recordId },
+      details: { sentTo: email },
+    });
+
     return NextResponse.json({ ok: true, sentTo: email }, { headers });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    await logError(e, { event: "portal.invite.failed", component: "send-invite" });
     return NextResponse.json({ error: msg }, { status: 502, headers });
   }
 }
