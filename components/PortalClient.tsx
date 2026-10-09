@@ -615,7 +615,7 @@ function DailyLogModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: a
 /* ---------- Photos / Documents upload + list (split, with expiry flags) ---------- */
 function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any; onViewFile: (recordId: number, fileName: string, rawUrl: string) => void; onClose: () => void }) {
   const [items, setItems] = useState<any[] | null>(null);
-  const [kind, setKind] = useState<"photo" | "document">("photo");
+  const [kind, setKind] = useState<"photo" | "document" | "invoice">("photo");
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState("");
   const [docType, setDocType] = useState("");
@@ -637,9 +637,21 @@ function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any
     setErr(""); setMsg("");
     if (!file) return setErr("Choose a file first.");
     if (kind === "document" && !docType) return setErr("Pick a document type.");
+    if (kind === "invoice" && !jobId) return setErr("Pick the job this invoice is for.");
     setBusy(true);
     try {
       const base64 = await fileToBase64(file);
+      if (kind === "invoice") {
+        const r = await api("upload-invoice", {
+          file: { fileName: file.name, base64 },
+          jobId: Number(jobId),
+          description: desc || undefined,
+        });
+        setMsg(r.testMode ? "Test mode — invoice not saved to Quickbase." : "Invoice uploaded.");
+        setFile(null); setDesc(""); setJobId("");
+        reload();
+        return;
+      }
       await api("upload-attachment", {
         file: { fileName: file.name, base64 },
         type: kind === "photo" ? "Image" : docType,
@@ -667,9 +679,20 @@ function PhotosModal({ jobs, api, onViewFile, onClose }: { jobs: Job[]; api: any
       <div className="seg">
         <button className={"seg-btn" + (kind === "photo" ? " on" : "")} onClick={() => setKind("photo")}>📷 Photo</button>
         <button className={"seg-btn" + (kind === "document" ? " on" : "")} onClick={() => setKind("document")}>📄 Document</button>
+        <button className={"seg-btn" + (kind === "invoice" ? " on" : "")} onClick={() => setKind("invoice")}>🧾 Invoice</button>
       </div>
 
-      {kind === "photo" ? (
+      {kind === "invoice" ? (
+        <div className="m-grid">
+          <label>Job <span className="required">*</span>
+            <select value={jobId} onChange={(e) => setJobId(e.target.value)}>
+              <option value="">— select —</option>
+              {jobs.map((j) => <option key={j.id} value={j.jobId}>{j.name}</option>)}
+            </select>
+          </label>
+          <label>Invoice # / notes<input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+        </div>
+      ) : kind === "photo" ? (
         <div className="m-grid">
           <label>Job (optional)
             <select value={jobId} onChange={(e) => setJobId(e.target.value)}>

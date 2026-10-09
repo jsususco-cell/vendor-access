@@ -16,6 +16,7 @@ export interface Vendor {
   email: string;
   phone: string;
   address: string;
+  state: string; // State/Region (fid 10) — "Puerto Rico" drives invoice notifications
   perms: { jobs: boolean; schedule: boolean; photos: boolean; docs: boolean };
 }
 
@@ -56,6 +57,7 @@ export async function resolveVendor(token: string): Promise<Vendor | null> {
     email: String(fv(row, V.email) ?? ""),
     phone: String(fv(row, V.phone) ?? fv(row, V.cell) ?? ""),
     address,
+    state: String(fv(row, V.state) ?? ""),
     perms: {
       jobs: Boolean(fv(row, V.canViewJobs)),
       schedule: Boolean(fv(row, V.canViewSchedule)),

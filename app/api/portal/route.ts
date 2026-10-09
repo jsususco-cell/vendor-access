@@ -8,7 +8,9 @@ import {
   getJobDetail,
   createDailyLog,
   uploadAttachment,
+  getAssignedJobs,
 } from "@/lib/portal";
+import { QB_REALM, TABLES, INVOICE_TYPE } from "@/lib/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,6 +97,65 @@ export async function POST(req: Request) {
           }
         }
         return NextResponse.json({ ok: true, recordId });
+      }
+
+      case "upload-invoice": {
+        if (!p.photos && !p.docs) return NextResponse.json({ error: "no access" }, { status: 403 });
+        const f = body.file ?? {};
+        if (!f.fileName || !f.base64) {
+          return NextResponse.json({ error: "file required" }, { status: 400 });
+        }
+        // Job is required and must be one of this vendor's own assignments.
+        const jobId = Number(body.jobId) || 0;
+        const job = jobId ? (await getAssignedJobs(id)).find((j) => j.jobId === jobId) : undefined;
+        if (!job) return NextResponse.json({ error: "Pick one of your jobs." }, { status: 400 });
+
+        const description = body.description ? String(body.description) : undefined;
+        // INVOICE_TEST_MODE=1 skips the Quickbase write so local runs never touch live
+        // data; INVOICE_TEST_STATE lets a non-PR test vendor exercise the PR email path.
+        const testMode = process.env.INVOICE_TEST_MODE === "1";
+        const recordId = testMode
+          ? 0
+          : await uploadAttachment(id, {
+              jobId,
+              fileName: String(f.fileName),
+              base64: String(f.base64),
+              description,
+              type: INVOICE_TYPE,
+            });
+        const state = (testMode && process.env.INVOICE_TEST_STATE) || vendor.state;
+
+        // Recipients come from INVOICE_NOTIFY_TO; n8n only emails for PR vendors and
+        // rejects calls without the shared key — see n8n/INVOICES.md.
+        const notifyTo = (process.env.INVOICE_NOTIFY_TO ?? "")
+          .split(",").map((s) => s.trim()).filter(Boolean).join(",");
+        if (process.env.N8N_INVOICE_WEBHOOK && notifyTo) {
+          try {
+            await fetch(process.env.N8N_INVOICE_WEBHOOK, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-portal-key": process.env.N8N_INVOICE_KEY ?? "" },
+              body: JSON.stringify({
+                notifyTo,
+                testMode,
+                recordId,
+                recordUrl: recordId ? `https://${QB_REALM}/db/${TABLES.attachments}?a=dr&rid=${recordId}` : "",
+                vendorId: id,
+                company: vendor.company,
+                contact: vendor.name,
+                vendorEmail: vendor.email,
+                state,
+                jobId,
+                jobName: job.name,
+                fileName: String(f.fileName),
+                description: description ?? "",
+                uploadedAt: new Date().toISOString(),
+              }),
+            });
+          } catch {
+            /* non-fatal — the invoice is saved either way */
+          }
+        }
+        return NextResponse.json({ ok: true, recordId, testMode });
       }
 
       default:

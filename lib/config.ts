@@ -51,6 +51,8 @@ export const VENDOR_DOC_TYPES = [
   "Byrdson Master Service Agreement", "W9", "Water Testing", "Proposal",
 ];
 export const PHOTO_TYPE = "Image";
+// Invoices are saved as Attachments with this fid 54 value (QB adds the choice on first save).
+export const INVOICE_TYPE = "Invoice";
 
 // ---- buskqh272 : Vendors (holds accounts + unique invite tokens + access flags) ----
 export const VENDOR_FIELDS = {
